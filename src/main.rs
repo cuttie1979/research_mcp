@@ -2,6 +2,7 @@ mod arxiv;
 mod config;
 mod fetch;
 mod llm;
+mod pubmed;
 mod search;
 mod slug;
 mod workflow;

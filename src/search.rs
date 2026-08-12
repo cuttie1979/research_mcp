@@ -234,14 +234,25 @@ mod tests {
 
     #[tokio::test]
     async fn live_search_with_fallback() {
+        // External search engines rate-limit bursty test traffic; retry a few times.
         let s = Search::new();
-        let results = s.query("Rust programming language", 5).await.expect("search should work");
-        assert!(!results.is_empty(), "expected some results from DDG or Brave");
-        for r in results.iter().take(3) {
-            assert!(!r.url.is_empty());
-            assert!(!r.title.is_empty());
-            println!("  {} — {}", r.title, r.url);
+        let mut last_err: Option<String> = None;
+        for attempt in 0..3 {
+            match s.query("Rust programming language", 5).await {
+                Ok(results) if !results.is_empty() => {
+                    for r in results.iter().take(3) {
+                        assert!(!r.url.is_empty());
+                        assert!(!r.title.is_empty());
+                        println!("  {} — {}", r.title, r.url);
+                    }
+                    return;
+                }
+                Ok(_) => last_err = Some("empty results".into()),
+                Err(e) => last_err = Some(e.to_string()),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
+        panic!("search failed after retries: {}", last_err.unwrap_or_default());
     }
 
     #[test]

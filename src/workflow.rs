@@ -10,6 +10,7 @@ use regex::Regex;
 use crate::arxiv::{Arxiv, ArxivPaper};
 use crate::fetch::Fetcher;
 use crate::llm::{ChatMessage, Llm};
+use crate::pubmed::{Pubmed, PubmedPaper};
 use crate::search::{Search, SearchResult};
 use crate::slug::slugify;
 
@@ -42,6 +43,7 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
     let search = Search::new();
     let fetcher = Fetcher::new();
     let arxiv = Arxiv::new();
+    let pubmed = Pubmed::new();
     let temperature = cfg.temperature;
 
     let slug = slugify(topic);
@@ -88,6 +90,19 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
         }
     }
 
+    // Direct PubMed fetch if the topic contains a PMID (e.g. PMID:12345678).
+    let mut pubmed_papers: Vec<PubmedPaper> = Vec::new();
+    for id in extract_pubmed_ids(topic) {
+        println!("\n── PubMed by-id: {id}");
+        match pubmed.by_id(&id).await {
+            Ok(Some(p)) => {
+                pubmed_papers.push(p);
+            }
+            Ok(None) => eprintln!("  ⚠ PMID {id} not found"),
+            Err(e) => eprintln!("  ⚠ PubMed fetch failed for {id}: {e}"),
+        }
+    }
+
     for (i, q) in queries.iter().enumerate() {
         println!("\n── Search {}/{}: {q}", i + 1, queries.len());
         match search.query(q, 6).await {
@@ -117,7 +132,28 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
-    println!("\nTotal unique results: {} web + {} arxiv", all_results.len(), arxiv_papers.len());
+
+    // PubMed search for the first 2 plan queries.
+    for q in queries.iter().take(2) {
+        println!("── PubMed search: {q}");
+        match pubmed.search(q, 4).await {
+            Ok(papers) => {
+                for p in papers {
+                    if seen_urls.insert(p.url.clone()) {
+                        pubmed_papers.push(p);
+                    }
+                }
+            }
+            Err(e) => eprintln!("  ⚠ pubmed search failed for {q}: {e}"),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    println!(
+        "\nTotal unique results: {} web + {} arxiv + {} pubmed",
+        all_results.len(),
+        arxiv_papers.len(),
+        pubmed_papers.len()
+    );
 
     // ── Phase 3: Fetch sources ─────────────────────────────────────
     let mut evidence: Vec<EvidenceItem> = Vec::new();
@@ -137,6 +173,25 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
                 p.authors.join(", "),
                 p.categories.join(", "),
                 p.published.clone().unwrap_or_default(),
+                p.abstract_text
+            ),
+        });
+    }
+
+    // PubMed papers: abstract text is the source content.
+    for p in pubmed_papers {
+        accepted += 1;
+        evidence.push(EvidenceItem {
+            id: format!("S{}", accepted),
+            title: format!("{} (PMID:{})", p.title, p.pmid),
+            url: p.url.clone(),
+            snippet: String::new(),
+            text: format!(
+                "Journal: {}\nAuthors: {}\nPublished: {}\nDOI: {}\n\nAbstract:\n{}",
+                p.journal.clone().unwrap_or_default(),
+                p.authors.join(", "),
+                p.published.clone().unwrap_or_default(),
+                p.doi.clone().unwrap_or_default(),
                 p.abstract_text
             ),
         });
@@ -223,6 +278,26 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
 fn extract_arxiv_ids(text: &str) -> Vec<String> {
     let re = Regex::new(
         r"(?:arxiv\.org/(?:abs|pdf)/|arxiv:\s*|^|\s)(\d{4}\.\d{4,5}(?:v\d+)?)",
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    for cap in re.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            let id = m.as_str().to_string();
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
+
+/// Extract PubMed IDs (PMIDs) from a topic string. Matches:
+/// - PMID:12345678, PMID 12345678
+/// - pubmed.ncbi.nlm.nih.gov/12345678/
+fn extract_pubmed_ids(text: &str) -> Vec<String> {
+    let re = Regex::new(
+        r"(?:PMID:?\s*|pubmed\.ncbi\.nlm\.nih\.gov/|pubmed\.ncbi\.nlm\.nih\.gov/(?:pubmed/)?|^|\s)(\d{6,9})(?!\d)",
     )
     .unwrap();
     let mut out = Vec::new();
