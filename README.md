@@ -30,6 +30,28 @@ topic → planning → searching → fetching → drafting → citing
 
 ## Install
 
+### Download (prebuilt binaries)
+
+Grab the package for your platform from the
+[latest release](https://github.com/cuttie1979/research_mcp/releases/latest):
+
+| Platform | Asset | Arch |
+|---|---|---|
+| Linux | `research_mcp-<ver>-linux-x86_64.tar.gz` | x86-64 |
+| macOS | `research_mcp-<ver>-macos-arm64.tar.gz` | Apple Silicon (M1+) |
+
+```bash
+# Linux / macOS
+tar xzf research_mcp-<ver>-<platform>.tar.gz
+cd research_mcp-<ver>
+cp config.example.toml config.toml   # fill in your API keys
+./research_mcp "your research topic"
+```
+
+No Rust toolchain needed — the binaries are self-contained (only system libc).
+
+### From source
+
 ```bash
 cargo build --release
 cp config.example.toml config.toml   # fill in your API keys

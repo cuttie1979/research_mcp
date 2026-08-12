@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - SECURITY.md — vulnerability reporting policy
 - docs/opencode.md — full OpenCode setup guide
 - `.opencode/skills/research-deepresearch/` — agent skill for the MCP tools
+- Prebuilt binary assets in releases: Linux x86-64, macOS arm64
+- README: Download section with per-platform install instructions
 
 ## [0.8.0] — 2026-08-12
 
