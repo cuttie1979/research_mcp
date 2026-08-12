@@ -202,7 +202,7 @@ pub async fn run_debate(
 
 /// Condense a cited draft for debate: Executive Summary + Open Questions +
 /// the Sources list. Falls back to the first 2000 chars if sections are absent.
-fn condense_draft(cited_draft: &str) -> String {
+pub fn condense_draft(cited_draft: &str) -> String {
     let mut out = String::new();
 
     if let Some(pos) = cited_draft.find("## Executive Summary") {

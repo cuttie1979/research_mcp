@@ -42,7 +42,7 @@ impl Default for Config {
             out_dir: PathBuf::from("/home/user/AIDocumentStore/raw/research"),
             db_path: PathBuf::from("/home/user/AIHome/research_mcp/research.db"),
             temperature: 0.3,
-            llm_timeout_secs: 120,
+            llm_timeout_secs: 300,
         }
     }
 }

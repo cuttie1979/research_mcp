@@ -658,7 +658,7 @@ fn build_evidence_block(evidence: &[EvidenceItem]) -> String {
     for e in evidence {
         s.push_str(&format!("[{0}] {1}\n", e.id, e.title));
         s.push_str(&format!("    URL: {}\n", e.url));
-        let excerpt: String = e.text.chars().take(6000).collect();
+        let excerpt: String = e.text.chars().take(3000).collect();
         s.push_str(&format!("    CONTENT: {excerpt}\n\n"));
     }
     s
