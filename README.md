@@ -5,7 +5,7 @@ pipeline with an SQLite-backed queue, MCP server, and five source types.
 
 ## Features
 
-- **7-phase pipeline**: planning → searching → fetching → drafting → citing →
+- **8-phase pipeline**: planning → searching → fetching → drafting → citing →
   debating → reviewing → delivering
 - **5 source types**: web (DuckDuckGo + Brave fallback), arXiv (HTML abs page,
   immune to export API rate limits), PubMed (E-utilities), Scopus (Elsevier,

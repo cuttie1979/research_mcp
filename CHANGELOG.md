@@ -38,6 +38,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Multi-agent debate phase (before review): 5 agents with distinct beliefs
   critique the brief's content AND references, converge over rounds
+- Pipeline is now 8 phases: planning → searching → fetching → drafting →
+  citing → debating → reviewing → delivering
 - Consensus measurement: mean position, spread, convergence
 - Debate consensus/dissensus points fed into the review pass with
   deterministic weighting
