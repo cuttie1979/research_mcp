@@ -1,3 +1,5 @@
+#[macro_use]
+mod log;
 mod arxiv;
 mod config;
 mod db;
@@ -93,8 +95,9 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.mcp {
         // ── MCP server mode ─────────────────────────────────────────
+        log::set_mcp_mode(true);
         let worker = worker::Worker::new(wf_cfg, db.clone());
-        worker.spawn_mcp()?;
+        worker.spawn_mcp().await?;
         return Ok(());
     }
 

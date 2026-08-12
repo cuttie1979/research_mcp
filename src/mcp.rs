@@ -212,6 +212,22 @@ impl ResearchMcp {
         })?;
         Ok(())
     }
+
+    /// Serve the MCP server forever (awaits the stdio connection). Runs the
+    /// worker in the background. Must be called from a tokio runtime.
+    pub async fn serve_async(db: Arc<Db>, worker: Worker) -> Result<(), RmcpError> {
+        tokio::spawn(async move {
+            if let Err(e) = worker.run_loop().await {
+                eprintln!("worker crashed: {e}");
+            }
+        });
+        let server = Self::new(db);
+        let transport = stdio();
+        let running = serve_server(server, transport).await?;
+        // Keep the service alive: waiting() blocks until the connection ends.
+        let _ = running.waiting().await;
+        Ok(())
+    }
 }
 
 #[tool_router(server_handler)]

@@ -98,6 +98,12 @@ impl Config {
 
     pub fn candidate_paths() -> Vec<PathBuf> {
         let mut paths = vec![PathBuf::from("config.toml")];
+        // Also look next to the executable (MCP servers run from arbitrary CWD).
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                paths.push(dir.join("config.toml"));
+            }
+        }
         if let Ok(home) = std::env::var("HOME") {
             paths.push(PathBuf::from(home).join(".config/research_mcp/config.toml"));
         }

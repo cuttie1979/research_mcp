@@ -313,9 +313,9 @@ mod tests {
                     assert!(!paper.title.is_empty(), "title should be present");
                     assert!(!paper.abstract_text.is_empty(), "abstract should be present");
                     assert!(!paper.authors.is_empty(), "authors should be present");
-                    println!("  title: {}", paper.title);
-                    println!("  authors: {}", paper.authors.join(", "));
-                    println!("  categories: {:?}", paper.categories);
+                    log_info!("  title: {}", paper.title);
+                    log_info!("  authors: {}", paper.authors.join(", "));
+                    log_info!("  categories: {:?}", paper.categories);
                     return;
                 }
                 Ok(None) => last_err = Some("not found".into()),
@@ -337,7 +337,7 @@ mod tests {
                     for p in papers.iter().take(3) {
                         assert!(!p.arxiv_id.is_empty());
                         assert!(!p.title.is_empty());
-                        println!("  [{}] {}", p.arxiv_id, p.title);
+                        log_info!("  [{}] {}", p.arxiv_id, p.title);
                     }
                     return;
                 }

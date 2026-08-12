@@ -34,7 +34,7 @@ impl Search {
         if !ddg.is_empty() {
             return Ok(ddg);
         }
-        eprintln!("  ⚠ DDG returned nothing for {query:?}, trying Brave...");
+        log_warn!("  ⚠ DDG returned nothing for {query:?}, trying Brave...");
         self.brave(query, max).await
     }
 
@@ -243,7 +243,7 @@ mod tests {
                     for r in results.iter().take(3) {
                         assert!(!r.url.is_empty());
                         assert!(!r.title.is_empty());
-                        println!("  {} — {}", r.title, r.url);
+                        log_info!("  {} — {}", r.title, r.url);
                     }
                     return;
                 }

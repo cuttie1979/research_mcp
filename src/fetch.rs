@@ -96,6 +96,6 @@ mod tests {
         let f = Fetcher::new();
         let text = f.fetch("https://www.rust-lang.org/", 2000).await.expect("fetch should work");
         assert!(text.chars().count() >= 100, "expected meaningful content, got {} chars", text.chars().count());
-        println!("fetched {} chars, starts with: {}", text.chars().count(), text.chars().take(120).collect::<String>());
+        log_info!("fetched {} chars, starts with: {}", text.chars().count(), text.chars().take(120).collect::<String>());
     }
 }

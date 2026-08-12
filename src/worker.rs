@@ -27,18 +27,20 @@ impl Worker {
     }
 
     /// Spawn the worker loop + serve the MCP server over stdio.
-    pub fn spawn_mcp(&self) -> anyhow::Result<()> {
-        crate::mcp::ResearchMcp::spawn(self.db.clone(), Worker {
+    pub async fn spawn_mcp(&self) -> anyhow::Result<()> {
+        crate::mcp::ResearchMcp::serve_async(self.db.clone(), Worker {
             engine: self.engine.clone(),
             db: self.db.clone(),
         })
+        .await?;
+        Ok(())
     }
 
     /// Run the worker loop forever: pick the next queued run, execute it.
     pub async fn run_loop(&self) -> Result<()> {
         let recovered = self.db.recover_stale_runs()?;
         if recovered > 0 {
-            eprintln!("worker: recovered {recovered} stale run(s) (running → queued)");
+            log_warn!("worker: recovered {recovered} stale run(s) (running → queued)");
         }
 
         loop {
@@ -47,23 +49,23 @@ impl Worker {
                 Some(run) => {
                     self.db.set_run_started(&run.id)?;
                     self.db.log_phase(&run.id, &run.phase, "started", "run picked up by worker")?;
-                    println!("\n════════════════════════════════════════");
-                    println!("worker: executing run {} ({})", run.id, run.topic);
-                    println!("════════════════════════════════════════\n");
+                    log_info!("\n════════════════════════════════════════");
+                    log_info!("worker: executing run {} ({})", run.id, run.topic);
+                    log_info!("════════════════════════════════════════\n");
 
                     match self.execute_with_retry(&run).await {
                         Ok(completed) => {
                             if completed {
-                                println!("worker: run {} COMPLETE", run.id);
+                                log_info!("worker: run {} COMPLETE", run.id);
                             } else {
                                 // Run did not complete but returned Ok — treat as blocked.
-                                eprintln!("worker: run {} did not complete", run.id);
+                                log_warn!("worker: run {} did not complete", run.id);
                             }
                         }
                         Err(e) => {
                             // Retry policy: auth errors → failed; others → keep retrying
                             // inside execute_with_retry until success or auth failure.
-                            eprintln!("worker: run {} failed: {e}", run.id);
+                            log_warn!("worker: run {} failed: {e}", run.id);
                         }
                     }
                 }
@@ -89,7 +91,7 @@ impl Worker {
                         return Ok(false);
                     }
                     let delay = Duration::from_secs(backoff.min(MAX_BACKOFF_SECS));
-                    eprintln!("worker: run {} error (retrying in {}s): {e}", run.id, delay.as_secs());
+                    log_warn!("worker: run {} error (retrying in {}s): {e}", run.id, delay.as_secs());
                     tokio::time::sleep(delay).await;
                     backoff *= 2;
                     // Reset to queued phase bookkeeping so a crash between retries

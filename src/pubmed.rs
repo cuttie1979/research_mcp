@@ -225,7 +225,7 @@ mod tests {
             assert!(!pp.pmid.is_empty());
             assert!(!pp.title.is_empty());
             assert!(pp.url.starts_with("https://pubmed.ncbi.nlm.nih.gov/"));
-            println!("  [{}] {}", pp.pmid, pp.title);
+            log_info!("  [{}] {}", pp.pmid, pp.title);
         }
     }
 
@@ -236,7 +236,7 @@ mod tests {
         let paper = p.by_id("11504948").await.expect("fetch by id works").expect("paper exists");
         assert_eq!(paper.pmid, "11504948");
         assert!(!paper.abstract_text.is_empty(), "abstract should be present");
-        println!("  title: {}", paper.title);
-        println!("  authors: {}", paper.authors.join(", "));
+        log_info!("  title: {}", paper.title);
+        log_info!("  authors: {}", paper.authors.join(", "));
     }
 }

@@ -98,7 +98,7 @@ impl Llm {
         for attempt in 0..3 {
             if attempt > 0 {
                 let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt as u32));
-                eprintln!("  ⚠ LLM retry {attempt}/3 in {}s...", delay.as_secs());
+                log_warn!("  ⚠ LLM retry {attempt}/3 in {}s...", delay.as_secs());
                 tokio::time::sleep(delay).await;
             }
             match self

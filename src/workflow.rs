@@ -92,7 +92,7 @@ impl Engine {
         let plan: Plan = if let Some(plan_json) = session().plan_json {
             serde_json::from_str(&plan_json).context("parse saved plan")?
         } else {
-            println!("── planning ──");
+            log_info!("── planning ──");
             self.begin_phase(run, "planning")?;
             let plan = plan_research(&llm, &topic, temperature).await?;
             let mut s = SessionData::default();
@@ -102,10 +102,10 @@ impl Engine {
             plan
         };
 
-        println!("\n── Plan ──");
-        println!("scale: {}", plan.scale);
+        log_info!("\n── Plan ──");
+        log_info!("scale: {}", plan.scale);
         for q in &plan.queries {
-            println!("  - {q}");
+            log_info!("  - {q}");
         }
         let plan_path = drafts_dir.join(format!("{slug}-plan.md"));
         std::fs::write(&plan_path, format_plan(&plan, &topic, &slug)).context("write plan")?;
@@ -119,7 +119,7 @@ impl Engine {
                     // Already fetched? sources_json holds evidence items.
                     if let Ok(ev) = serde_json::from_str::<Vec<EvidenceItem>>(&json) {
                         if !ev.is_empty() {
-                            println!("── search+fetch already done (resume) ──");
+                            log_info!("── search+fetch already done (resume) ──");
                             (ev, Vec::new())
                         } else {
                             bail!("sources_json holds empty evidence")
@@ -127,13 +127,13 @@ impl Engine {
                     } else {
                         // Search done, fetch pending.
                         let gathered: Gathered = serde_json::from_str(&json).context("parse saved sources")?;
-                        println!(
+                        log_info!(
                             "\nResume: {} web + {} arxiv + {} pubmed results (from session)",
                             gathered.web.len(),
                             gathered.arxiv.len(),
                             gathered.pubmed.len()
                         );
-                        println!("\n── fetching ──");
+                        log_info!("\n── fetching ──");
                         self.begin_phase(run, "fetching")?;
                         let (ev, rej) =
                             fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, max_sources).await?;
@@ -146,10 +146,10 @@ impl Engine {
                 }
                 None => {
                     // Neither done — run search then fetch.
-                    println!("\n── searching ──");
+                    log_info!("\n── searching ──");
                     self.begin_phase(run, "searching")?;
                     let gathered = gather(&search, &arxiv, &pubmed, &plan, &topic).await?;
-                    println!(
+                    log_info!(
                         "\nTotal unique results: {} web + {} arxiv + {} pubmed",
                         gathered.web.len(),
                         gathered.arxiv.len(),
@@ -160,7 +160,7 @@ impl Engine {
                     self.db.save_session(&run.id, &s)?;
                     self.db.log_phase(&run.id, "searching", "ok", "search complete")?;
 
-                    println!("\n── fetching ──");
+                    log_info!("\n── fetching ──");
                     self.begin_phase(run, "fetching")?;
                     let (ev, rej) =
                         fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, max_sources).await?;
@@ -185,7 +185,7 @@ impl Engine {
         let draft: String = if let Some(d) = session().draft_text {
             d
         } else {
-            println!("\n── drafting ──");
+            log_info!("\n── drafting ──");
             self.begin_phase(run, "drafting")?;
             let d = draft_report(&llm, &topic, &evidence, temperature).await?;
             let mut s = SessionData::default();
@@ -201,7 +201,7 @@ impl Engine {
         let cited: String = if let Some(c) = session().cited_text {
             c
         } else {
-            println!("── citing ──");
+            log_info!("── citing ──");
             self.begin_phase(run, "citing")?;
             let c = cite_report(&llm, &draft, &evidence, temperature).await?;
             let mut s = SessionData::default();
@@ -218,7 +218,7 @@ impl Engine {
             // Review done; final doc = cited (no revision was persisted separately).
             (cited.clone(), r)
         } else {
-            println!("── reviewing ──");
+            log_info!("── reviewing ──");
             self.begin_phase(run, "reviewing")?;
             let (f, r) = review_report(&llm, &cited, &evidence, temperature).await?;
             let mut s = SessionData::default();
@@ -231,7 +231,7 @@ impl Engine {
         std::fs::write(&review_path, &review_md).context("write review")?;
 
         // ── Phase 7: delivering ─────────────────────────────────────
-        println!("── delivering ──");
+        log_info!("── delivering ──");
         self.begin_phase(run, "delivering")?;
         let report_path = out_dir.join(format!("{slug}.md"));
         std::fs::write(&report_path, &final_md).context("write final report")?;
@@ -283,32 +283,32 @@ async fn gather(
 
     // Direct arXiv fetch if the topic contains an arXiv ID (e.g. 2607.12631).
     for id in extract_arxiv_ids(topic) {
-        println!("\n── arXiv by-id: {id}");
+        log_info!("\n── arXiv by-id: {id}");
         match arxiv.by_id(&id).await {
             Ok(Some(p)) => {
                 seen_urls.insert(p.url.clone());
                 arxiv_papers.push(p);
             }
-            Ok(None) => eprintln!("  ⚠ arXiv id {id} not found"),
-            Err(e) => eprintln!("  ⚠ arXiv fetch failed for {id}: {e}"),
+            Ok(None) => log_warn!("  ⚠ arXiv id {id} not found"),
+            Err(e) => log_warn!("  ⚠ arXiv fetch failed for {id}: {e}"),
         }
     }
 
     // Direct PubMed fetch if the topic contains a PMID (e.g. PMID:12345678).
     for id in extract_pubmed_ids(topic) {
-        println!("\n── PubMed by-id: {id}");
+        log_info!("\n── PubMed by-id: {id}");
         match pubmed.by_id(&id).await {
             Ok(Some(p)) => {
                 seen_urls.insert(p.url.clone());
                 pubmed_papers.push(p);
             }
-            Ok(None) => eprintln!("  ⚠ PMID {id} not found"),
-            Err(e) => eprintln!("  ⚠ PubMed fetch failed for {id}: {e}"),
+            Ok(None) => log_warn!("  ⚠ PMID {id} not found"),
+            Err(e) => log_warn!("  ⚠ PubMed fetch failed for {id}: {e}"),
         }
     }
 
     for (i, q) in queries.iter().enumerate() {
-        println!("\n── Search {}/{}: {q}", i + 1, queries.len());
+        log_info!("\n── Search {}/{}: {q}", i + 1, queries.len());
         match search.query(q, 6).await {
             Ok(results) => {
                 for r in results {
@@ -317,13 +317,13 @@ async fn gather(
                     }
                 }
             }
-            Err(e) => eprintln!("  ⚠ search failed for {q}: {e}"),
+            Err(e) => log_warn!("  ⚠ search failed for {q}: {e}"),
         }
     }
 
     // arXiv search for the first 2 plan queries.
     for q in queries.iter().take(2) {
-        println!("── arXiv search: {q}");
+        log_info!("── arXiv search: {q}");
         match arxiv.search(q, 4).await {
             Ok(papers) => {
                 for p in papers {
@@ -332,14 +332,14 @@ async fn gather(
                     }
                 }
             }
-            Err(e) => eprintln!("  ⚠ arxiv search failed for {q}: {e}"),
+            Err(e) => log_warn!("  ⚠ arxiv search failed for {q}: {e}"),
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
     // PubMed search for the first 2 plan queries.
     for q in queries.iter().take(2) {
-        println!("── PubMed search: {q}");
+        log_info!("── PubMed search: {q}");
         match pubmed.search(q, 4).await {
             Ok(papers) => {
                 for p in papers {
@@ -348,7 +348,7 @@ async fn gather(
                     }
                 }
             }
-            Err(e) => eprintln!("  ⚠ pubmed search failed for {q}: {e}"),
+            Err(e) => log_warn!("  ⚠ pubmed search failed for {q}: {e}"),
         }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
@@ -406,7 +406,7 @@ async fn fetch_sources(
         if evidence.iter().any(|e| e.url == r.url) {
             continue;
         }
-        println!("── Fetch: {}", r.url);
+        log_info!("── Fetch: {}", r.url);
         match fetcher.fetch(&r.url, 12000).await {
             Ok(text) => {
                 if text.chars().count() < 200 {
@@ -423,7 +423,7 @@ async fn fetch_sources(
                 });
             }
             Err(e) => {
-                eprintln!("  ⚠ fetch failed: {e}");
+                log_warn!("  ⚠ fetch failed: {e}");
                 rejected.push(r.url.clone());
             }
         }
@@ -494,8 +494,8 @@ async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan>
         let raw = llm.complete_json(&[sys.clone(), user.clone()], temperature).await?;
         match parse_plan_json(&raw) {
             Ok(p) if !p.queries.is_empty() => return Ok(p),
-            Ok(_) => eprintln!("  ⚠ plan had no queries, retry {}/3", attempt + 1),
-            Err(e) => eprintln!("  ⚠ plan parse failed: {e}, retry {}/3", attempt + 1),
+            Ok(_) => log_warn!("  ⚠ plan had no queries, retry {}/3", attempt + 1),
+            Err(e) => log_warn!("  ⚠ plan parse failed: {e}, retry {}/3", attempt + 1),
         }
     }
     bail!("Could not produce a valid plan after 3 attempts")
