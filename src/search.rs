@@ -233,11 +233,12 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "live search test — external engines rate-limit bursty traffic; run with --ignored"]
     async fn live_search_with_fallback() {
         // External search engines rate-limit bursty test traffic; retry a few times.
         let s = Search::new();
         let mut last_err: Option<String> = None;
-        for attempt in 0..3 {
+        for attempt in 0..4 {
             match s.query("Rust programming language", 5).await {
                 Ok(results) if !results.is_empty() => {
                     for r in results.iter().take(3) {
