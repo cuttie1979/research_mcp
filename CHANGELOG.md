@@ -6,8 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- CHANGELOG.md, CONTRIBUTING.md, LICENSE.md
-- GitHub Actions CI (build + test + clippy `-D warnings`)
+- SECURITY.md — vulnerability reporting policy
+- docs/opencode.md — full OpenCode setup guide
+- `.opencode/skills/research-deepresearch/` — agent skill for the MCP tools
 
 ## [0.8.0] — 2026-08-12
 
