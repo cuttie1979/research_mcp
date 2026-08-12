@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 
+use crate::arxiv::{Arxiv, ArxivPaper};
 use crate::fetch::Fetcher;
 use crate::llm::{ChatMessage, Llm};
 use crate::search::{Search, SearchResult};
@@ -39,6 +41,7 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
     let llm = Llm::new(cfg.model.clone(), cfg.api_key.clone(), cfg.llm_base_url.clone());
     let search = Search::new();
     let fetcher = Fetcher::new();
+    let arxiv = Arxiv::new();
     let temperature = cfg.temperature;
 
     let slug = slugify(topic);
@@ -71,6 +74,20 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
 
     let mut all_results: Vec<SearchResult> = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
+
+    // Direct arXiv fetch if the topic contains an arXiv ID (e.g. 2607.12631).
+    let mut arxiv_papers: Vec<ArxivPaper> = Vec::new();
+    for id in extract_arxiv_ids(topic) {
+        println!("\n── arXiv by-id: {id}");
+        match arxiv.by_id(&id).await {
+            Ok(Some(p)) => {
+                arxiv_papers.push(p);
+            }
+            Ok(None) => eprintln!("  ⚠ arXiv id {id} not found"),
+            Err(e) => eprintln!("  ⚠ arXiv fetch failed for {id}: {e}"),
+        }
+    }
+
     for (i, q) in queries.iter().enumerate() {
         println!("\n── Search {}/{}: {q}", i + 1, queries.len());
         match search.query(q, 6).await {
@@ -84,14 +101,52 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
             Err(e) => eprintln!("  ⚠ search failed for {q}: {e}"),
         }
     }
-    println!("\nTotal unique results: {}", all_results.len());
+
+    // arXiv search in parallel with DDG for the first 2 plan queries.
+    for q in queries.iter().take(2) {
+        println!("── arXiv search: {q}");
+        match arxiv.search(q, 4).await {
+            Ok(papers) => {
+                for p in papers {
+                    if seen_urls.insert(p.url.clone()) {
+                        arxiv_papers.push(p);
+                    }
+                }
+            }
+            Err(e) => eprintln!("  ⚠ arxiv search failed for {q}: {e}"),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    println!("\nTotal unique results: {} web + {} arxiv", all_results.len(), arxiv_papers.len());
 
     // ── Phase 3: Fetch sources ─────────────────────────────────────
     let mut evidence: Vec<EvidenceItem> = Vec::new();
     let mut accepted = 0usize;
     let mut rejected: Vec<String> = Vec::new();
 
+    // arXiv papers: abstract text is the source content — no HTML fetch needed.
+    for p in arxiv_papers {
+        accepted += 1;
+        evidence.push(EvidenceItem {
+            id: format!("S{}", accepted),
+            title: format!("{} (arXiv:{})", p.title, p.arxiv_id),
+            url: p.url.clone(),
+            snippet: String::new(),
+            text: format!(
+                "Authors: {}\nCategories: {}\nPublished: {}\n\nAbstract:\n{}",
+                p.authors.join(", "),
+                p.categories.join(", "),
+                p.published.clone().unwrap_or_default(),
+                p.abstract_text
+            ),
+        });
+    }
+
     for r in all_results.into_iter().take(cfg.max_sources) {
+        // Skip URLs already covered by arXiv fetch.
+        if evidence.iter().any(|e| e.url == r.url) {
+            continue;
+        }
         println!("── Fetch: {}", r.url);
         match fetcher.fetch(&r.url, 12000).await {
             Ok(text) => {
@@ -160,6 +215,27 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
 }
 
 // ── Phase implementations ──────────────────────────────────────────
+
+/// Extract arXiv IDs from a topic string. Matches:
+/// - bare IDs like "2607.12631"
+/// - arxiv.org/abs/2607.12631, arxiv.org/pdf/2607.12631v1
+/// - arxiv:2607.12631
+fn extract_arxiv_ids(text: &str) -> Vec<String> {
+    let re = Regex::new(
+        r"(?:arxiv\.org/(?:abs|pdf)/|arxiv:\s*|^|\s)(\d{4}\.\d{4,5}(?:v\d+)?)",
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    for cap in re.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            let id = m.as_str().to_string();
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+    }
+    out
+}
 
 async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan> {
     let sys = ChatMessage::system(
