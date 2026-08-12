@@ -102,10 +102,15 @@ Each run produces (in `out_dir`):
 
 ## License
 
-[MIT](LICENSE) (or AGPL-3.0 — see LICENSE).
+[MIT](LICENSE.md) (or AGPL-3.0 — see LICENSE).
 
 Inspired by:
 - [companion-inc/feynman](https://github.com/companion-inc/feynman) (MIT) —
   deepresearch workflow pattern
 - [MiroShark/MiroShark](https://github.com/MiroShark/MiroShark) (AGPL-3.0) —
   multi-agent belief state + debate pattern (reimplemented, LLM-based)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are tracked in
+[CHANGELOG.md](CHANGELOG.md).

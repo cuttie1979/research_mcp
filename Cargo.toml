@@ -3,6 +3,9 @@ name = "research_mcp"
 version = "0.1.0"
 edition = "2024"
 description = "Rust deepresearch tool — Feynman deepresearch port with OpenCode Go LLM + DuckDuckGo search"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/cuttie1979/research_mcp"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
