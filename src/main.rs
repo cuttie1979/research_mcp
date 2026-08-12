@@ -28,6 +28,18 @@ struct Cli {
     #[arg(long)]
     mcp: bool,
 
+    /// Show the status of a run by ID (CLI mode)
+    #[arg(long)]
+    status: Option<String>,
+
+    /// List runs (CLI mode), optionally filtered by status
+    #[arg(long)]
+    list: bool,
+
+    /// Status filter for --list
+    #[arg(long)]
+    list_status: Option<String>,
+
     /// OpenCode Go model ID (overrides config.toml)
     #[arg(long)]
     model: Option<String>,
@@ -102,6 +114,51 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ── CLI mode ───────────────────────────────────────────────────
+    // Query commands (no research run).
+    if let Some(run_id) = &cli.status {
+        match db.get_run(run_id)? {
+            Some(r) => {
+                println!("ID:     {}", r.id);
+                println!("Topic:  {}", r.topic);
+                println!("Status: {} (phase: {}, progress: {}%)", r.status, r.phase, r.progress);
+                println!("Slug:   {}", r.slug);
+                if let Some(e) = &r.error {
+                    println!("Error:  {e}");
+                }
+                if let Some(p) = &r.report_path {
+                    println!("Report: {p}");
+                }
+                if let Some(p) = &r.provenance_path {
+                    println!("Provenance: {p}");
+                }
+                println!("Batch:  {}", r.batch_id.as_deref().unwrap_or("-"));
+                println!("Attempt: {}", r.attempt);
+                println!("\nPhase log:");
+                for ev in db.phase_log(run_id)? {
+                    println!("  [{}] {} — {} — {}", ev.created_at, ev.phase, ev.status, ev.message);
+                }
+            }
+            None => eprintln!("run {run_id} not found"),
+        }
+        return Ok(());
+    }
+    if cli.list {
+        let runs = db.list_runs(cli.list_status.as_deref(), 50, 0)?;
+        if runs.is_empty() {
+            println!("(no runs)");
+        }
+        for r in runs {
+            println!(
+                "{:12} {:5}% {:12} {}",
+                r.status,
+                r.progress,
+                r.phase,
+                r.topic
+            );
+        }
+        return Ok(());
+    }
+
     let topic = cli
         .topic
         .clone()
