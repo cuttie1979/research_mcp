@@ -42,6 +42,10 @@ struct Cli {
     #[arg(long)]
     list_status: Option<String>,
 
+    /// Resume a run by ID (CLI mode) — continues from its saved session state
+    #[arg(long)]
+    resume: Option<String>,
+
     /// OpenCode Go model ID (overrides config.toml)
     #[arg(long)]
     model: Option<String>,
@@ -158,6 +162,34 @@ async fn main() -> anyhow::Result<()> {
                 r.phase,
                 r.topic
             );
+        }
+        return Ok(());
+    }
+
+    // Resume a run from its saved session state.
+    if let Some(run_id) = &cli.resume {
+        let run = db
+            .get_run(run_id)?
+            .ok_or_else(|| anyhow::anyhow!("run {run_id} not found"))?;
+        if run.status == "queued" || run.status == "running" {
+            let engine = workflow::Engine { cfg: wf_cfg, db: (*db).clone() };
+            match engine.execute_run(&run).await {
+                Ok(true) => {
+                    let r = db.get_run(&run.id)?.unwrap();
+                    println!("\n✔ Resume complete.");
+                    println!("  report:  {}", r.report_path.unwrap_or_default());
+                    println!("  provenance: {}", r.provenance_path.unwrap_or_default());
+                }
+                Ok(false) => {
+                    eprintln!("✖ Resume ended without completion.");
+                }
+                Err(e) => {
+                    eprintln!("✖ Resume failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            eprintln!("run {run_id} is in status '{}' — nothing to resume", run.status);
         }
         return Ok(());
     }
