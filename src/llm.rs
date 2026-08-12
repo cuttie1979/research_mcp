@@ -1,7 +1,7 @@
 //! OpenCode Go LLM client — OpenAI-compatible chat completions.
 //! Endpoint: https://opencode.ai/zen/go/v1/chat/completions
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,29 +93,57 @@ impl Llm {
             },
         };
 
-        let resp = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&req)
-            .send()
-            .await
-            .context("LLM request failed")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            bail!("LLM API error {status}: {body}");
+        // Retry on transient errors (5xx, network) with backoff.
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_millis(1000 * 2u64.pow(attempt as u32));
+                eprintln!("  ⚠ LLM retry {attempt}/3 in {}s...", delay.as_secs());
+                tokio::time::sleep(delay).await;
+            }
+            match self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .bearer_auth(&self.api_key)
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let parsed: ChatResponse = match resp.json().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            last_err = Some(e.into());
+                            continue;
+                        }
+                    };
+                    let content = parsed
+                        .choices
+                        .into_iter()
+                        .next()
+                        .and_then(|c| c.message.content)
+                        .filter(|c| !c.trim().is_empty());
+                    if let Some(c) = content {
+                        return Ok(c);
+                    }
+                    last_err = Some(anyhow::anyhow!("LLM returned empty response"));
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        let body = resp.text().await.unwrap_or_default();
+                        last_err = Some(anyhow::anyhow!("LLM API error {status}: {body}"));
+                        continue; // transient → retry
+                    }
+                    let body = resp.text().await.unwrap_or_default();
+                    bail!("LLM API error {status}: {body}");
+                }
+                Err(e) => {
+                    last_err = Some(e.into());
+                }
+            }
         }
 
-        let parsed: ChatResponse = resp.json().await.context("LLM response parse failed")?;
-        let content = parsed
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
-            .filter(|c| !c.trim().is_empty())
-            .context("LLM returned empty response")?;
-        Ok(content)
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("LLM request failed after retries")))
     }
 }
