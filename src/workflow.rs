@@ -297,7 +297,7 @@ fn extract_arxiv_ids(text: &str) -> Vec<String> {
 /// - pubmed.ncbi.nlm.nih.gov/12345678/
 fn extract_pubmed_ids(text: &str) -> Vec<String> {
     let re = Regex::new(
-        r"(?:PMID:?\s*|pubmed\.ncbi\.nlm\.nih\.gov/|pubmed\.ncbi\.nlm\.nih\.gov/(?:pubmed/)?|^|\s)(\d{6,9})(?!\d)",
+        r"(?:PMID:?\s*|pubmed\.ncbi\.nlm\.nih\.gov/|pubmed\.ncbi\.nlm\.nih\.gov/(?:pubmed/)?|^|\s)(\d{6,9})",
     )
     .unwrap();
     let mut out = Vec::new();
