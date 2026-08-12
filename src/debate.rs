@@ -236,15 +236,15 @@ async fn run_interviews(
     };
 
     let mut out = Vec::new();
-    for agent in agents.iter().take(3) {
-        // Interview the three most-confident agents on the open questions.
+    for agent in agents.iter().take(2) {
+        // Interview the two most-confident agents on the open questions.
         let q = questions.join("\n");
         let sys = ChatMessage::system(format!(
             "You are a research debate participant. A moderator asks you follow-up questions\n\
              on points the debate left open. Answer each question from your current belief.\n\
              Be precise, cite the concern, and state what evidence would settle it.\n\
              Write your answer in {}.\n\
-             Keep the whole answer under 250 words.",
+             Keep the whole answer under 150 words.",
             topic_language(topic),
         ));
         let belief = format!(
