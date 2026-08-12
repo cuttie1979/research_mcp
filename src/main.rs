@@ -1,5 +1,6 @@
 mod arxiv;
 mod config;
+mod db;
 mod fetch;
 mod llm;
 mod pubmed;
