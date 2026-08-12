@@ -106,7 +106,7 @@ Each run produces (in `out_dir`):
 
 ## License
 
-[MIT](LICENSE.md) (or AGPL-3.0 — see LICENSE).
+[MIT](LICENSE.md).
 
 Inspired by:
 - [companion-inc/feynman](https://github.com/companion-inc/feynman) (MIT) —
