@@ -6,6 +6,9 @@
 # OpenCode Go API key (required). Get it from https://opencode.ai/auth
 api_key = ""            # e.g. "sk-..."
 
+# Elsevier API key (ScienceDirect/Scopus). Get it from https://dev.elsevier.com/apikey/manage
+# elsevier_api_key = ""
+
 # OpenCode Go model ID
 model = "deepseek-v4-flash"
 

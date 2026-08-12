@@ -7,6 +7,7 @@ mod fetch;
 mod llm;
 mod mcp;
 mod pubmed;
+mod scopus;
 mod search;
 mod slug;
 mod worker;
@@ -98,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         model: cfg.model.clone(),
         api_key,
         llm_base_url: cfg.llm_base_url.clone(),
+        elsevier_api_key: cfg.elsevier_api_key.clone(),
         out_dir: cfg.out_dir.clone(),
         max_sources: cfg.max_sources,
         temperature: cfg.temperature,

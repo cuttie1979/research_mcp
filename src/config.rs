@@ -13,6 +13,8 @@ use serde::Deserialize;
 pub struct Config {
     /// OpenCode Go API key. Secret — keep out of git.
     pub api_key: Option<String>,
+    /// Elsevier (ScienceDirect/Scopus) API key. Secret — keep out of git.
+    pub elsevier_api_key: Option<String>,
     /// OpenCode Go model ID.
     pub model: String,
     /// Base URL for the LLM API.
@@ -31,6 +33,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             api_key: None,
+            elsevier_api_key: None,
             model: "deepseek-v4-flash".to_string(),
             llm_base_url: "https://opencode.ai/zen/go/v1".to_string(),
             max_sources: 8,
@@ -60,6 +63,10 @@ impl Config {
         if cfg.api_key.is_none() {
             cfg.api_key = std::env::var("OPENCODE_GO_API_KEY").ok().filter(|k| !k.is_empty());
         }
+        if cfg.elsevier_api_key.is_none() {
+            cfg.elsevier_api_key =
+                std::env::var("ELSEVIER_API_KEY").ok().filter(|k| !k.is_empty());
+        }
 
         Ok(cfg)
     }
@@ -67,6 +74,9 @@ impl Config {
     fn apply(&mut self, other: Config) {
         if other.api_key.is_some() {
             self.api_key = other.api_key;
+        }
+        if other.elsevier_api_key.is_some() {
+            self.elsevier_api_key = other.elsevier_api_key;
         }
         if !other.model.is_empty() {
             self.model = other.model;

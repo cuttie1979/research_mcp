@@ -14,6 +14,7 @@ use crate::db::{Db, ResearchRun, SessionData};
 use crate::fetch::Fetcher;
 use crate::llm::{ChatMessage, Llm};
 use crate::pubmed::{Pubmed, PubmedPaper};
+use crate::scopus::{Scopus, ScopusPaper};
 use crate::search::{Search, SearchResult};
 use crate::slug::slugify;
 
@@ -21,6 +22,7 @@ pub struct Config {
     pub model: String,
     pub api_key: String,
     pub llm_base_url: String,
+    pub elsevier_api_key: Option<String>,
     pub out_dir: PathBuf,
     pub max_sources: usize,
     pub temperature: f32,
@@ -77,6 +79,11 @@ impl Engine {
         let fetcher = Fetcher::new();
         let arxiv = Arxiv::new();
         let pubmed = Pubmed::new();
+        let scopus = self
+            .cfg
+            .elsevier_api_key
+            .as_ref()
+            .map(|k| Scopus::new(k.clone()));
         let temperature = self.cfg.temperature;
         let out_dir = self.cfg.out_dir.clone();
         let max_sources = self.cfg.max_sources;
@@ -136,7 +143,7 @@ impl Engine {
                         log_info!("\n── fetching ──");
                         self.begin_phase(run, "fetching")?;
                         let (ev, rej) =
-                            fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, max_sources).await?;
+                            fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
                         let mut sess = SessionData::default();
                         sess.sources_json = Some(serde_json::to_string(&ev)?);
                         self.db.save_session(&run.id, &sess)?;
@@ -148,12 +155,13 @@ impl Engine {
                     // Neither done — run search then fetch.
                     log_info!("\n── searching ──");
                     self.begin_phase(run, "searching")?;
-                    let gathered = gather(&search, &arxiv, &pubmed, &plan, &topic).await?;
+                    let gathered = gather(&search, &arxiv, &pubmed, scopus.as_ref(), &plan, &topic).await?;
                     log_info!(
-                        "\nTotal unique results: {} web + {} arxiv + {} pubmed",
+                        "\nTotal unique results: {} web + {} arxiv + {} pubmed + {} scopus",
                         gathered.web.len(),
                         gathered.arxiv.len(),
-                        gathered.pubmed.len()
+                        gathered.pubmed.len(),
+                        gathered.scopus.len()
                     );
                     let mut s = SessionData::default();
                     s.sources_json = Some(serde_json::to_string(&gathered)?);
@@ -163,7 +171,7 @@ impl Engine {
                     log_info!("\n── fetching ──");
                     self.begin_phase(run, "fetching")?;
                     let (ev, rej) =
-                        fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, max_sources).await?;
+                        fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
                     let mut sess = SessionData::default();
                     sess.sources_json = Some(serde_json::to_string(&ev)?);
                     self.db.save_session(&run.id, &sess)?;
@@ -265,12 +273,14 @@ struct Gathered {
     web: Vec<SearchResult>,
     arxiv: Vec<ArxivPaper>,
     pubmed: Vec<PubmedPaper>,
+    scopus: Vec<ScopusPaper>,
 }
 
 async fn gather(
     search: &Search,
     arxiv: &Arxiv,
     pubmed: &Pubmed,
+    scopus: Option<&Scopus>,
     plan: &Plan,
     topic: &str,
 ) -> Result<Gathered> {
@@ -279,6 +289,7 @@ async fn gather(
     let mut web: Vec<SearchResult> = Vec::new();
     let mut arxiv_papers: Vec<ArxivPaper> = Vec::new();
     let mut pubmed_papers: Vec<PubmedPaper> = Vec::new();
+    let mut scopus_papers: Vec<ScopusPaper> = Vec::new();
     let mut seen_urls = std::collections::HashSet::new();
 
     // Direct arXiv fetch if the topic contains an arXiv ID (e.g. 2607.12631).
@@ -353,7 +364,25 @@ async fn gather(
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
-    Ok(Gathered { web, arxiv: arxiv_papers, pubmed: pubmed_papers })
+    // Scopus search for the first 2 plan queries (metadata; abstract via CrossRef).
+    if let Some(s) = scopus {
+        for q in queries.iter().take(2) {
+            log_info!("── Scopus search: {q}");
+            match s.search(q, 4).await {
+                Ok(papers) => {
+                    for p in papers {
+                        if seen_urls.insert(p.url.clone()) {
+                            scopus_papers.push(p);
+                        }
+                    }
+                }
+                Err(e) => log_warn!("  ⚠ scopus search failed for {q}: {e}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+    }
+
+    Ok(Gathered { web, arxiv: arxiv_papers, pubmed: pubmed_papers, scopus: scopus_papers })
 }
 
 async fn fetch_sources(
@@ -361,6 +390,8 @@ async fn fetch_sources(
     web_results: &[SearchResult],
     arxiv_papers: Vec<ArxivPaper>,
     pubmed_papers: Vec<PubmedPaper>,
+    scopus_papers: Vec<ScopusPaper>,
+    scopus_client: Option<&Scopus>,
     max_sources: usize,
 ) -> Result<(Vec<EvidenceItem>, Vec<String>)> {
     let mut evidence: Vec<EvidenceItem> = Vec::new();
@@ -400,6 +431,39 @@ async fn fetch_sources(
                 p.abstract_text
             ),
         });
+    }
+
+    // Scopus papers: metadata + CrossRef abstract (if the publisher deposits one).
+    for mut p in scopus_papers {
+        let crossref_abs = match &p.doi {
+            Some(doi) if scopus_client.is_some() => {
+                match scopus_client.unwrap().abstract_by_doi(doi).await {
+                    Ok(a) => a,
+                    Err(_) => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        if !crossref_abs.is_empty() {
+            p.abstract_text = crossref_abs;
+        }
+        accepted += 1;
+        evidence.push(EvidenceItem {
+            id: format!("S{}", accepted),
+            title: format!("{} (Scopus)", p.title),
+            url: p.url.clone(),
+            snippet: String::new(),
+            text: format!(
+                "Journal: {}\nAuthors: {}\nYear: {}\nDOI: {}\nCited by: {}\n\nAbstract:\n{}",
+                p.journal.clone().unwrap_or_default(),
+                p.creators.join(", "),
+                p.year.clone().unwrap_or_default(),
+                p.doi.clone().unwrap_or_default(),
+                p.citedby,
+                p.abstract_text
+            ),
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     for r in web_results.iter().take(max_sources) {
