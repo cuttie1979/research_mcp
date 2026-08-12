@@ -44,6 +44,7 @@ pub struct SessionData {
     pub sources_json: Option<String>,
     pub draft_text: Option<String>,
     pub cited_text: Option<String>,
+    pub debate_text: Option<String>,
     pub review_text: Option<String>,
 }
 
@@ -75,9 +76,10 @@ impl Db {
     }
 
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS research_runs (
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS research_runs (
                 id TEXT PRIMARY KEY,
                 topic TEXT NOT NULL,
                 slug TEXT NOT NULL,
@@ -101,6 +103,7 @@ impl Db {
                 sources_json TEXT,
                 draft_text TEXT,
                 cited_text TEXT,
+                debate_text TEXT,
                 review_text TEXT
             );
             CREATE TABLE IF NOT EXISTS research_phase_log (
@@ -115,7 +118,21 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_runs_batch ON research_runs(batch_id);
             CREATE INDEX IF NOT EXISTS idx_phase_log_run ON research_phase_log(run_id);
             ",
-        )?;
+            )?;
+        } // release the migrate lock
+
+        // Migration for existing DBs: add debate_text column if missing.
+        let has_debate: bool = self.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('research_session') WHERE name = 'debate_text'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if !has_debate {
+            self.conn.lock().unwrap().execute_batch(
+                "ALTER TABLE research_session ADD COLUMN debate_text TEXT;",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -350,13 +367,14 @@ impl Db {
 
     pub fn save_session(&self, run_id: &str, data: &SessionData) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO research_session (run_id, plan_json, sources_json, draft_text, cited_text, review_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO research_session (run_id, plan_json, sources_json, draft_text, cited_text, debate_text, review_text)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(run_id) DO UPDATE SET
                 plan_json = COALESCE(excluded.plan_json, plan_json),
                 sources_json = COALESCE(excluded.sources_json, sources_json),
                 draft_text = COALESCE(excluded.draft_text, draft_text),
                 cited_text = COALESCE(excluded.cited_text, cited_text),
+                debate_text = COALESCE(excluded.debate_text, debate_text),
                 review_text = COALESCE(excluded.review_text, review_text)",
             params![
                 run_id,
@@ -364,6 +382,7 @@ impl Db {
                 data.sources_json,
                 data.draft_text,
                 data.cited_text,
+                data.debate_text,
                 data.review_text,
             ],
         )?;
@@ -374,7 +393,7 @@ impl Db {
         let conn = self.conn.lock().unwrap();
         let row = conn
             .query_row(
-                "SELECT plan_json, sources_json, draft_text, cited_text, review_text
+                "SELECT plan_json, sources_json, draft_text, cited_text, debate_text, review_text
                  FROM research_session WHERE run_id = ?1",
                 params![run_id],
                 |r| {
@@ -383,7 +402,8 @@ impl Db {
                         sources_json: r.get(1)?,
                         draft_text: r.get(2)?,
                         cited_text: r.get(3)?,
-                        review_text: r.get(4)?,
+                        debate_text: r.get(4)?,
+                        review_text: r.get(5)?,
                     })
                 },
             )
