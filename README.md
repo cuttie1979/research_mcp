@@ -69,15 +69,19 @@ research_mcp --mcp
 
 ### MCP (OpenCode)
 
-Add to `opencode.jsonc`:
+See [docs/opencode.md](docs/opencode.md) for the full setup guide (config,
+troubleshooting, tool usage). Short version:
 
 ```jsonc
 "research_mcp": {
   "type": "local",
-  "command": ["/path/to/research_mcp", "--mcp"],
+  "command": ["/absolute/path/to/research_mcp", "--mcp"],
   "enabled": true
 }
 ```
+
+A ready-made OpenCode skill ships in `.opencode/skills/research-deepresearch/`
+— it teaches the agent the recommended submit → poll → read flow.
 
 ### MCP tools
 
