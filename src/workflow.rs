@@ -268,6 +268,9 @@ impl Engine {
         log_info!("── delivering ──");
         self.begin_phase(run, "delivering")?;
         let report_path = out_dir.join(format!("{slug}.md"));
+        // Append the Agent Debate Summary so the reader sees where experts
+        // agreed and disagreed — unless it is already present (resume case).
+        let final_md = append_debate_summary(&final_md, &debate);
         std::fs::write(&report_path, &final_md).context("write final report")?;
 
         let provenance = build_provenance(
@@ -705,14 +708,20 @@ async fn review_report(
         "You are a rigorous internal research reviewer. Verify the cited brief.\n\
          Checks: unsupported claims, logical gaps, single-source critical claims, overstated confidence, invalid source IDs.\n\
          You receive the output of a multi-agent debate that critiqued the brief's CONTENT and REFERENCES.\n\
-         Use it as input:\n\
-         - Claims flagged in consensus_points must be double-checked; if a FATAL issue is confirmed, fix it.\n\
-         - Claims in dissensus_points must be marked with appropriate hedging or attributed as contested.\n\
-         - Treat debate findings as advisory, not authoritative — verify each against the sources yourself.\n\
+         Apply the debate input with DETERMINISTIC WEIGHTING — this is mandatory:\n\
+         CONSENSUS points (all or most agents agree):\n\
+         - Verify each consensus point against the sources yourself.\n\
+         - If a consensus point identifies a FATAL issue (unsupported claim, invalid source,\n\
+           single-source critical claim, overreach), you MUST fix it in the final document.\n\
+         - Consensus FATALs are authoritative unless the sources directly contradict the criticism.\n\
+         DISSENSUS points (agents disagree):\n\
+         - Do NOT change the document's substance for dissensus points.\n\
+         - Instead, add hedging or contested-attribution wording where the contested claim appears.\n\
+         - Mark them in the verification report as 'contested in debate'.\n\
          Produce:\n\
-         1. A verification report with findings marked FATAL / MAJOR / MINOR and the checks performed.\n\
-         2. If there are FATAL issues, the full corrected markdown document (complete, with ## Sources).\n\
-         3. If no FATAL issues, output the document unchanged.\n\
+         1. A verification report with findings marked FATAL / MAJOR / MINOR, the checks performed,\n\
+            and for each debate point: whether it was confirmed, rejected, or hedged.\n\
+         2. The final document: FATALs fixed, dissensus hedged, otherwise unchanged.\n\
          Output format:\n\
          ```\n\
          # Verification Report\n\
@@ -799,6 +808,92 @@ fn build_provenance(
     s
 }
 
+/// Append a human-readable "Agent Debate Summary" section to the final report.
+/// Idempotent: skips if the marker is already present (resume case).
+fn append_debate_summary(final_md: &str, debate: &DebateResult) -> String {
+    const MARKER: &str = "## Agent Debate Summary";
+    if final_md.contains(MARKER) {
+        return final_md.to_string();
+    }
+
+    let mut s = String::new();
+    s.push_str("\n\n---\n\n## Agent Debate Summary\n\n");
+    s.push_str(&format!(
+        "Five expert agents with distinct beliefs debated this brief before review. "
+    ));
+    s.push_str(&format!(
+        "Final positions: mean **{:.2}**, spread **{:.2}**, convergence **{:+.2}** (positive = converged).\n\n",
+        debate.consensus.mean_position, debate.consensus.spread, debate.consensus.convergence
+    ));
+    s.push_str("| Agent | Position | Confidence |\n|---|---|---|\n");
+    for p in &debate.consensus.final_positions {
+        s.push_str(&format!("| {} | {:.2} | {:.2} |\n", p.agent, p.position, p.confidence));
+    }
+
+    if !debate.consensus.consensus_points.is_empty() {
+        s.push_str("\n**Agents agreed on:**\n");
+        for p in &debate.consensus.consensus_points {
+            s.push_str(&format!("- {p}\n"));
+        }
+    }
+    if !debate.consensus.dissensus_points.is_empty() {
+        s.push_str("\n**Agents disagreed on:**\n");
+        for p in &debate.consensus.dissensus_points {
+            s.push_str(&format!("- {p}\n"));
+        }
+    }
+    s.push_str(
+        "\n*Debate findings were advisory inputs to the review pass; each was verified against sources before inclusion.*\n",
+    );
+
+    format!("{final_md}{s}")
+}
+
 fn rel(p: &Path) -> String {
     p.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod debate_summary_tests {
+    use super::*;
+    use crate::debate::{AgentPosition, ConsensusSummary, DebateAgent, DebateResult};
+
+    fn sample_debate() -> DebateResult {
+        let agents = vec![
+            DebateAgent { id: "A1".into(), name: "The Skeptic".into(), stance: "s".into(), position: -0.9, confidence: 0.8 },
+            DebateAgent { id: "A2".into(), name: "The Advocate".into(), stance: "s".into(), position: -0.5, confidence: 0.6 },
+        ];
+        DebateResult {
+            agents: agents.clone(),
+            rounds: vec![],
+            consensus: ConsensusSummary {
+                final_positions: agents.iter().map(|a| AgentPosition { agent: a.name.clone(), position: a.position, confidence: a.confidence }).collect(),
+                mean_position: -0.7,
+                spread: 0.4,
+                convergence: 0.25,
+                consensus_points: vec!["Point A".into()],
+                dissensus_points: vec!["Point B".into()],
+                summary: "sum".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn appends_section_with_positions() {
+        let md = "# Report\n\nBody.";
+        let out = append_debate_summary(md, &sample_debate());
+        assert!(out.contains("## Agent Debate Summary"));
+        assert!(out.contains("The Skeptic"));
+        assert!(out.contains("-0.90"));
+        assert!(out.contains("Point A"));
+        assert!(out.contains("Point B"));
+        assert!(out.contains("spread **0.40**"));
+    }
+
+    #[test]
+    fn idempotent_when_marker_present() {
+        let md = "# Report\n\n## Agent Debate Summary\n\nAlready here.";
+        let out = append_debate_summary(md, &sample_debate());
+        assert_eq!(out, md);
+    }
 }

@@ -125,13 +125,17 @@ pub async fn run_debate(
 
     let evidence_block = build_source_list(evidence);
 
+    // Context economy: agents get a condensed draft (exec summary + open
+    // questions + sources), not the full text — keeps LLM calls fast.
+    let draft_context = condense_draft(cited_draft);
+
     for round in 1..=rounds {
         log_info!("  ── debate round {round}/{} ──", rounds);
         let mut this_round: Vec<DebateArgument> = Vec::new();
 
         // Step 1: each agent argues from its current belief.
         for agent in &agents {
-            let arg = agent_argument(llm, agent, topic, cited_draft, &evidence_block, temperature).await?;
+            let arg = agent_argument(llm, agent, topic, &draft_context, &evidence_block, temperature).await?;
             this_round.push(DebateArgument {
                 agent: agent.id.clone(),
                 round,
@@ -196,6 +200,42 @@ pub async fn run_debate(
     })
 }
 
+/// Condense a cited draft for debate: Executive Summary + Open Questions +
+/// the Sources list. Falls back to the first 2000 chars if sections are absent.
+fn condense_draft(cited_draft: &str) -> String {
+    let mut out = String::new();
+
+    if let Some(pos) = cited_draft.find("## Executive Summary") {
+        let end = cited_draft[pos..]
+            .find("\n## ")
+            .map(|i| pos + i)
+            .unwrap_or(cited_draft.len());
+        out.push_str(&cited_draft[pos..end]);
+        out.push_str("\n\n");
+    }
+
+    if let Some(pos) = cited_draft.find("## Open Questions") {
+        let end = cited_draft[pos..]
+            .find("\n## ")
+            .map(|i| pos + i)
+            .unwrap_or(cited_draft.len());
+        out.push_str(&cited_draft[pos..end]);
+        out.push_str("\n\n");
+    }
+
+    // Sources section (titles + URLs only, strip long content).
+    if let Some(pos) = cited_draft.find("## Sources") {
+        out.push_str(&cited_draft[pos..]);
+    }
+
+    if out.trim().is_empty() {
+        out.push_str(&cited_draft.chars().take(2000).collect::<String>());
+    }
+
+    // Hard cap to keep the prompt bounded.
+    out.chars().take(6000).collect()
+}
+
 /// Agent writes an argument from its current belief.
 async fn agent_argument(
     llm: &Llm,
@@ -214,7 +254,7 @@ async fn agent_argument(
          - Focus on: unsupported claims, weak or missing citations, single-source critical claims,\n\
            logical gaps, overstatement, and reference quality.\n\
          - Be specific: name the claim or citation you challenge, and say what evidence would change your mind.\n\
-         - Keep it under 200 words. No pleasantries.\n\
+         - Keep it under 150 words. No pleasantries.\n\
          - Output only your argument.",
     );
     let belief = format!(
@@ -426,5 +466,30 @@ mod tests {
         assert!(s.contains("mean position 0.00"));
         assert!(s.contains("spread 1.00"));
         assert!(s.contains("convergence +0.20"));
+    }
+}
+
+#[cfg(test)]
+mod helpers_tests {
+    use super::*;
+
+    #[test]
+    fn condense_extracts_sections() {
+        let draft = "# Title\n\n## Executive Summary\n\nKey findings here.\n\n## Findings\n\nLong content.\n\n## Open Questions\n\nQ1 remains.\n\n## Sources\n\n[S1] url";
+        let c = condense_draft(draft);
+        assert!(c.contains("## Executive Summary"));
+        assert!(c.contains("Key findings here."));
+        assert!(c.contains("## Open Questions"));
+        assert!(c.contains("Q1 remains."));
+        assert!(c.contains("## Sources"));
+        assert!(!c.contains("Long content."), "findings section should be stripped");
+    }
+
+    #[test]
+    fn condense_falls_back_to_head() {
+        let draft = "No structured sections here. Just text. ".repeat(200);
+        let c = condense_draft(&draft);
+        assert!(c.len() <= 6000);
+        assert!(!c.is_empty());
     }
 }
