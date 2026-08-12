@@ -856,6 +856,12 @@ fn append_debate_summary(final_md: &str, debate: &DebateResult) -> String {
             s.push_str(&format!("- {p}\n"));
         }
     }
+    if !debate.interviews.is_empty() {
+        s.push_str("\n**Agent interviews (open questions):**\n");
+        for i in &debate.interviews {
+            s.push_str(&format!("\n*{q}*\n\n**{agent}:** {answer}\n", q = i.question, agent = i.agent, answer = i.answer));
+        }
+    }
     s.push_str(
         "\n*Debate findings were advisory inputs to the review pass; each was verified against sources before inclusion.*\n",
     );
@@ -889,6 +895,7 @@ mod debate_summary_tests {
                 dissensus_points: vec!["Point B".into()],
                 summary: "sum".into(),
             },
+            interviews: vec![],
         }
     }
 
@@ -909,5 +916,42 @@ mod debate_summary_tests {
         let md = "# Report\n\n## Agent Debate Summary\n\nAlready here.";
         let out = append_debate_summary(md, &sample_debate());
         assert_eq!(out, md);
+    }
+}
+
+#[cfg(test)]
+mod interview_summary_tests {
+    use super::*;
+    use crate::debate::{AgentPosition, ConsensusSummary, DebateAgent, DebateResult, InterviewAnswer};
+
+    fn debate_with_interviews() -> DebateResult {
+        let agents = vec![
+            DebateAgent { id: "A1".into(), name: "The Skeptic".into(), stance: "s".into(), position: -0.9, confidence: 0.8 },
+        ];
+        DebateResult {
+            agents: agents.clone(),
+            rounds: vec![],
+            consensus: ConsensusSummary {
+                final_positions: agents.iter().map(|a| AgentPosition { agent: a.name.clone(), position: a.position, confidence: a.confidence }).collect(),
+                mean_position: -0.9,
+                spread: 0.0,
+                convergence: 0.1,
+                consensus_points: vec![],
+                dissensus_points: vec!["Open point X".into()],
+                summary: "sum".into(),
+            },
+            interviews: vec![
+                InterviewAnswer { agent: "The Skeptic".into(), question: "Open point X".into(), answer: "I need more evidence on Y.".into() },
+            ],
+        }
+    }
+
+    #[test]
+    fn appends_interviews_section() {
+        let md = "# Report";
+        let out = append_debate_summary(md, &debate_with_interviews());
+        assert!(out.contains("Agent interviews"));
+        assert!(out.contains("Open point X"));
+        assert!(out.contains("I need more evidence on Y."));
     }
 }

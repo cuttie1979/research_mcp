@@ -41,6 +41,15 @@ pub struct DebateResult {
     pub agents: Vec<DebateAgent>,
     pub rounds: Vec<Vec<DebateArgument>>,
     pub consensus: ConsensusSummary,
+    /// Post-debate interviews: targeted follow-up answers per agent.
+    pub interviews: Vec<InterviewAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterviewAnswer {
+    pub agent: String,
+    pub question: String,
+    pub answer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +158,7 @@ pub async fn run_debate(
                 .iter()
                 .filter(|a| a.agent != agent.id)
                 .collect();
-            let (new_pos, new_conf) = agent_update(llm, agent, &others, temperature).await?;
+            let (new_pos, new_conf) = agent_update(llm, agent, topic, &others, temperature).await?;
             agent.position = new_pos;
             agent.confidence = new_conf;
         }
@@ -183,6 +192,11 @@ pub async fn run_debate(
     let (consensus_points, dissensus_points) =
         summarize_agreement(llm, topic, &final_positions, &round_arguments, temperature).await?;
 
+    // Post-debate interviews: targeted follow-up questions on the dissensus
+    // points, so the reader sees the agents' reasoning on what stayed open.
+    log_info!("  ── interviews ──");
+    let interviews = run_interviews(llm, topic, &agents, &dissensus_points, temperature).await?;
+
     let summary = build_summary(&final_positions, mean_position, spread, convergence);
 
     Ok(DebateResult {
@@ -197,7 +211,57 @@ pub async fn run_debate(
             dissensus_points,
             summary,
         },
+        interviews,
     })
+}
+
+/// Post-debate interviews: each agent answers the open (dissensus) questions.
+/// MiroShark's interview_agents pattern — first-person reasoning on what
+/// remained contested after the debate rounds.
+async fn run_interviews(
+    llm: &Llm,
+    topic: &str,
+    agents: &[DebateAgent],
+    dissensus_points: &[String],
+    temperature: f32,
+) -> Result<Vec<InterviewAnswer>> {
+    if dissensus_points.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let questions = if dissensus_points.len() > 3 {
+        dissensus_points[..3].to_vec()
+    } else {
+        dissensus_points.to_vec()
+    };
+
+    let mut out = Vec::new();
+    for agent in agents.iter().take(3) {
+        // Interview the three most-confident agents on the open questions.
+        let q = questions.join("\n");
+        let sys = ChatMessage::system(format!(
+            "You are a research debate participant. A moderator asks you follow-up questions\n\
+             on points the debate left open. Answer each question from your current belief.\n\
+             Be precise, cite the concern, and state what evidence would settle it.\n\
+             Write your answer in {}.\n\
+             Keep the whole answer under 250 words.",
+            topic_language(topic),
+        ));
+        let belief = format!(
+            "# YOUR CURRENT BELIEFS AND STANCE\n- Stance: {}\n- Position on the topic: {:.2}\n- Confidence: {:.2}",
+            agent.stance, agent.position, agent.confidence
+        );
+        let user = ChatMessage::user(format!(
+            "Topic: {topic}\n\nOpen questions from the debate:\n{q}\n\n{belief}\n\nAnswer each question."
+        ));
+        let answer = llm.complete(&[sys, user], temperature).await?;
+        out.push(InterviewAnswer {
+            agent: agent.name.clone(),
+            question: q,
+            answer,
+        });
+    }
+    Ok(out)
 }
 
 /// Condense a cited draft for debate: Executive Summary + Open Questions +
@@ -236,6 +300,28 @@ pub fn condense_draft(cited_draft: &str) -> String {
     out.chars().take(6000).collect()
 }
 
+/// Detect the topic language for agent output. Hungarian is detected via
+/// accent marks common to Hungarian; everything else defaults to English.
+pub fn topic_language(topic: &str) -> &'static str {
+    let hun = ['á', 'é', 'í', 'ó', 'ö', 'ő', 'ú', 'ü', 'ű'];
+    if topic.chars().any(|c| hun.contains(&c.to_ascii_lowercase())) {
+        "Hungarian"
+    } else {
+        "English"
+    }
+}
+
+/// Language instruction injected into agent prompts so debates on a
+/// Hungarian topic produce Hungarian arguments (and vice versa).
+fn language_instruction(topic: &str) -> &'static str {
+    match topic_language(topic) {
+        "Hungarian" =>
+            "Write your argument in Hungarian (magyarul), matching the topic language.\n",
+        _ =>
+            "Write your argument in English, matching the topic language.\n",
+    }
+}
+
 /// Agent writes an argument from its current belief.
 async fn agent_argument(
     llm: &Llm,
@@ -245,7 +331,7 @@ async fn agent_argument(
     source_list: &str,
     temperature: f32,
 ) -> Result<String> {
-    let sys = ChatMessage::system(
+    let sys = ChatMessage::system(format!(
         "You are a research debate participant. You are critiquing a research brief \
          before it is finalized. You examine BOTH the content claims AND the references \
          that support them.\n\
@@ -255,8 +341,10 @@ async fn agent_argument(
            logical gaps, overstatement, and reference quality.\n\
          - Be specific: name the claim or citation you challenge, and say what evidence would change your mind.\n\
          - Keep it under 150 words. No pleasantries.\n\
-         - Output only your argument.",
-    );
+         - Output only your argument.\n\
+         - {}",
+        language_instruction(topic),
+    ));
     let belief = format!(
         "# YOUR CURRENT BELIEFS AND STANCE\n- Stance: {}\n- Position on the topic: {:.2} (-1 strongly against, +1 strongly for)\n- Confidence: {:.2}",
         agent.stance, agent.position, agent.confidence
@@ -271,20 +359,23 @@ async fn agent_argument(
 async fn agent_update(
     llm: &Llm,
     agent: &DebateAgent,
+    topic: &str,
     others: &[&DebateArgument],
     temperature: f32,
 ) -> Result<(f32, f32)> {
-    let sys = ChatMessage::system(
+    let sys = ChatMessage::system(format!(
         "You are a research debate participant. You have just read your colleagues' arguments.\n\
          Update your belief:\n\
          - If an argument is strong (specific, evidence-backed, addresses your concerns), move toward it.\n\
          - If an argument is weak (vague, unsupported, already refuted), ignore it.\n\
          - High-confidence positions resist change; low-confidence ones are more movable.\n\
          - Your position stays within -1.0 (strongly against) to +1.0 (strongly for).\n\
+         - The \"reason\" field must be written in {}.\n\
          Respond with a single JSON object:\n\
-         {\"position\": <number -1..1>, \"confidence\": <number 0..1>, \"reason\": \"<one sentence>\"}\n\
+         {{\"position\": <number -1..1>, \"confidence\": <number 0..1>, \"reason\": \"<one sentence>\"}}\n\
          No markdown, only the JSON object.",
-    );
+        topic_language(topic),
+    ));
     let others_text: Vec<String> = others
         .iter()
         .map(|a| format!("[{}]: {}", a.agent, a.text))
@@ -329,6 +420,7 @@ async fn summarize_agreement(
          identify:\n\
          1. consensus_points: claims or issues where the agents converged (agreement). 2-4 items.\n\
          2. dissensus_points: claims or issues where agents still disagree. 2-4 items.\n\
+         Write the points in the same language as the topic.\n\
          Respond with a single JSON object:\n\
          {\"consensus_points\": [\"...\"], \"dissensus_points\": [\"...\"]}\n\
          No markdown, only the JSON object.",
@@ -448,6 +540,7 @@ mod tests {
                 dissensus_points: vec![],
                 summary: "summary".into(),
             },
+            interviews: vec![],
         };
         let json = serde_json::to_string(&result).unwrap();
         let back: DebateResult = serde_json::from_str(&json).unwrap();
@@ -491,5 +584,26 @@ mod helpers_tests {
         let c = condense_draft(&draft);
         assert!(c.len() <= 6000);
         assert!(!c.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn detects_hungarian() {
+        assert_eq!(topic_language("A ketogén diéta hatásai a 2-es típusú cukorbetegségre"), "Hungarian");
+        assert_eq!(topic_language("What are the effects of ketogenic diet"), "English");
+        assert_eq!(topic_language("Mik a keto diéta előnyei?"), "Hungarian");
+        assert_eq!(topic_language("sports nutrition"), "English");
+    }
+
+    #[test]
+    fn language_instruction_matches() {
+        let hu = language_instruction("Magyar téma a kutatásról");
+        assert!(hu.contains("Hungarian"));
+        let en = language_instruction("English research topic");
+        assert!(en.contains("English"));
     }
 }
