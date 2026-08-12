@@ -6,6 +6,8 @@
 //! - research_phase_log: timestamped phase events (audit trail)
 
 use anyhow::{Context, Result};
+use std::sync::Mutex;
+
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub const RUN_STATUSES: &[&str] = &[
@@ -55,8 +57,9 @@ pub struct PhaseEvent {
     pub created_at: String,
 }
 
+#[derive(Clone)]
 pub struct Db {
-    conn: Connection,
+    conn: std::sync::Arc<Mutex<Connection>>,
 }
 
 impl Db {
@@ -64,15 +67,16 @@ impl Db {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).context("create db parent dir")?;
         }
-        let conn = Connection::open(path).with_context(|| format!("open db {}", path.display()))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        let conn = std::sync::Arc::new(Mutex::new(Connection::open(path).with_context(|| format!("open db {}", path.display()))?));
+        conn.lock().unwrap().execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         let db = Db { conn };
         db.migrate()?;
         Ok(db)
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch(
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS research_runs (
                 id TEXT PRIMARY KEY,
                 topic TEXT NOT NULL,
@@ -124,7 +128,7 @@ impl Db {
     pub fn create_run(&self, topic: &str, slug: &str, batch_id: Option<&str>, priority: i64) -> Result<ResearchRun> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO research_runs
                 (id, topic, slug, status, phase, progress, batch_id, priority, attempt, created_at, updated_at)
              VALUES (?1, ?2, ?3, 'queued', 'planning', 0, ?4, ?5, 1, ?6, ?6)",
@@ -134,8 +138,8 @@ impl Db {
     }
 
     pub fn get_run(&self, id: &str) -> Result<Option<ResearchRun>> {
-        let row = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let row = conn
             .query_row(
                 "SELECT id, topic, slug, status, phase, progress, error,
                         report_path, provenance_path, batch_id, priority, attempt,
@@ -184,7 +188,8 @@ impl Db {
         sql.push_str(" OFFSET ?");
         params.push(Box::new(offset));
 
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
             Ok(ResearchRun {
                 id: r.get(0)?,
@@ -219,7 +224,8 @@ impl Db {
                     created_at, updated_at, started_at, completed_at
              FROM research_runs WHERE {where_clause} ORDER BY created_at DESC"
         );
-        let mut stmt = self.conn.prepare(&sql)?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql)?;
         let params = rusqlite::params_from_iter(args.iter().map(|s| s.as_str()));
         let rows = stmt.query_map(params, |r| {
             Ok(ResearchRun {
@@ -246,7 +252,7 @@ impl Db {
 
     pub fn update_status(&self, id: &str, status: &str, phase: &str, progress: i64, error: Option<&str>) -> Result<()> {
         let now = Self::now();
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE research_runs
              SET status = ?2, phase = ?3, progress = ?4, error = ?5, updated_at = ?6,
                  started_at = COALESCE(started_at, ?6),
@@ -259,7 +265,7 @@ impl Db {
 
     pub fn set_run_started(&self, id: &str) -> Result<()> {
         let now = Self::now();
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE research_runs SET status='running', started_at = COALESCE(started_at, ?2), updated_at = ?2 WHERE id = ?1",
             params![id, now],
         )?;
@@ -268,7 +274,7 @@ impl Db {
 
     pub fn set_complete(&self, id: &str, report_path: &str, provenance_path: &str) -> Result<()> {
         let now = Self::now();
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE research_runs
              SET status='complete', phase='delivering', progress=100, error=NULL,
                  report_path = ?2, provenance_path = ?3, completed_at = ?4, updated_at = ?4
@@ -279,11 +285,11 @@ impl Db {
     }
 
     pub fn increment_attempt(&self, id: &str) -> Result<i64> {
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "UPDATE research_runs SET attempt = attempt + 1, updated_at = ?2 WHERE id = ?1",
             params![id, Self::now()],
         )?;
-        let attempt: i64 = self.conn.query_row(
+        let attempt: i64 = self.conn.lock().unwrap().query_row(
             "SELECT attempt FROM research_runs WHERE id = ?1",
             params![id],
             |r| r.get(0),
@@ -295,7 +301,7 @@ impl Db {
     /// Reset to 'queued' so the worker picks it up again.
     pub fn recover_stale_runs(&self) -> Result<usize> {
         let now = Self::now();
-        let n = self.conn.execute(
+        let n = self.conn.lock().unwrap().execute(
             "UPDATE research_runs SET status='queued', updated_at = ?2 WHERE status='running'",
             params![1, now],
         )?;
@@ -304,8 +310,8 @@ impl Db {
 
     /// Next run to process: highest priority, then oldest. Only 'queued'.
     pub fn next_queued(&self) -> Result<Option<ResearchRun>> {
-        let row = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let row = conn
             .query_row(
                 "SELECT id, topic, slug, status, phase, progress, error,
                         report_path, provenance_path, batch_id, priority, attempt,
@@ -343,7 +349,7 @@ impl Db {
     // ── session ─────────────────────────────────────────────────────
 
     pub fn save_session(&self, run_id: &str, data: &SessionData) -> Result<()> {
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO research_session (run_id, plan_json, sources_json, draft_text, cited_text, review_text)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(run_id) DO UPDATE SET
@@ -365,8 +371,8 @@ impl Db {
     }
 
     pub fn get_session(&self, run_id: &str) -> Result<Option<SessionData>> {
-        let row = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let row = conn
             .query_row(
                 "SELECT plan_json, sources_json, draft_text, cited_text, review_text
                  FROM research_session WHERE run_id = ?1",
@@ -388,7 +394,7 @@ impl Db {
     // ── phase log ───────────────────────────────────────────────────
 
     pub fn log_phase(&self, run_id: &str, phase: &str, status: &str, message: &str) -> Result<()> {
-        self.conn.execute(
+        self.conn.lock().unwrap().execute(
             "INSERT INTO research_phase_log (run_id, phase, status, message, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![run_id, phase, status, message, Self::now()],
@@ -397,7 +403,8 @@ impl Db {
     }
 
     pub fn phase_log(&self, run_id: &str) -> Result<Vec<PhaseEvent>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, run_id, phase, status, message, created_at
              FROM research_phase_log WHERE run_id = ?1 ORDER BY id ASC",
         )?;
@@ -415,7 +422,7 @@ impl Db {
     }
 
     pub fn count_running(&self) -> Result<i64> {
-        let n: i64 = self.conn.query_row(
+        let n: i64 = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM research_runs WHERE status = 'running'",
             [],
             |r| r.get(0),

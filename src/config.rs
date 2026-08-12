@@ -21,6 +21,8 @@ pub struct Config {
     pub max_sources: usize,
     /// Output directory for .md + .provenance.md.
     pub out_dir: PathBuf,
+    /// SQLite database path.
+    pub db_path: PathBuf,
     /// Temperature for drafting.
     pub temperature: f32,
 }
@@ -33,6 +35,7 @@ impl Default for Config {
             llm_base_url: "https://opencode.ai/zen/go/v1".to_string(),
             max_sources: 8,
             out_dir: PathBuf::from("/home/user/AIDocumentStore/raw/research"),
+            db_path: PathBuf::from("/home/user/AIHome/research_mcp/research.db"),
             temperature: 0.3,
         }
     }
@@ -76,6 +79,9 @@ impl Config {
         }
         if !other.out_dir.as_os_str().is_empty() {
             self.out_dir = other.out_dir;
+        }
+        if !other.db_path.as_os_str().is_empty() {
+            self.db_path = other.db_path;
         }
         if other.temperature != 0.0 {
             self.temperature = other.temperature;

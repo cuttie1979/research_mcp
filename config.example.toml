@@ -18,5 +18,8 @@ model = "deepseek-v4-flash"
 # Output directory for <slug>.md + <slug>.provenance.md
 # out_dir = "/home/user/AIDocumentStore/raw/research"
 
+# SQLite database path (research queue + session state)
+# db_path = "/home/user/AIHome/research_mcp/research.db"
+
 # LLM temperature for drafting
 # temperature = 0.3

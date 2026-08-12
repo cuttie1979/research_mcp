@@ -7,7 +7,7 @@ use quick_xml::Reader;
 
 pub const ARXIV_API_URL: &str = "http://export.arxiv.org/api/query";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ArxivPaper {
     pub arxiv_id: String,
     pub title: String,
@@ -181,25 +181,49 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "live arXiv test — run with --ignored to avoid rate limits"]
     async fn live_search() {
+        // arXiv rate-limits bursty test traffic (429); retry with backoff.
         let a = Arxiv::new();
-        let papers = a.search("induced emotion LLM decision making", 3).await.expect("arxiv search works");
-        assert!(!papers.is_empty(), "expected results");
-        for p in papers.iter().take(3) {
-            assert!(!p.arxiv_id.is_empty());
-            assert!(!p.title.is_empty());
-            assert!(p.url.starts_with("https://arxiv.org/abs/"));
-            println!("  [{}] {}", p.arxiv_id, p.title);
+        let mut last_err: Option<String> = None;
+        for attempt in 0..3 {
+            match a.search("induced emotion LLM decision making", 3).await {
+                Ok(papers) if !papers.is_empty() => {
+                    for p in papers.iter().take(3) {
+                        assert!(!p.arxiv_id.is_empty());
+                        assert!(!p.title.is_empty());
+                        assert!(p.url.starts_with("https://arxiv.org/abs/"));
+                        println!("  [{}] {}", p.arxiv_id, p.title);
+                    }
+                    return;
+                }
+                Ok(_) => last_err = Some("empty results".into()),
+                Err(e) => last_err = Some(e.to_string()),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
+        panic!("arxiv search failed after retries: {}", last_err.unwrap_or_default());
     }
 
     #[tokio::test]
+    #[ignore = "live arXiv test — run with --ignored to avoid rate limits"]
     async fn live_fetch_by_id() {
         let a = Arxiv::new();
-        let paper = a.by_id("2607.12631").await.expect("fetch by id works").expect("paper exists");
-        assert_eq!(paper.arxiv_id, "2607.12631");
-        assert!(!paper.abstract_text.is_empty(), "abstract should be present");
-        println!("  title: {}", paper.title);
-        println!("  authors: {}", paper.authors.join(", "));
+        let mut last_err: Option<String> = None;
+        for attempt in 0..3 {
+            match a.by_id("2607.12631").await {
+                Ok(Some(paper)) => {
+                    assert_eq!(paper.arxiv_id, "2607.12631");
+                    assert!(!paper.abstract_text.is_empty(), "abstract should be present");
+                    println!("  title: {}", paper.title);
+                    println!("  authors: {}", paper.authors.join(", "));
+                    return;
+                }
+                Ok(None) => last_err = Some("not found".into()),
+                Err(e) => last_err = Some(e.to_string()),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+        panic!("arxiv fetch failed after retries: {}", last_err.unwrap_or_default());
     }
 }

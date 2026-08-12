@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use anyhow::Result;
 use regex::Regex;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchResult {
     pub title: String,
     pub url: String,
