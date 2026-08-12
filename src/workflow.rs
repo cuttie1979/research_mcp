@@ -14,8 +14,10 @@ use crate::slug::slugify;
 pub struct Config {
     pub model: String,
     pub api_key: String,
+    pub llm_base_url: String,
     pub out_dir: PathBuf,
     pub max_sources: usize,
+    pub temperature: f32,
 }
 
 pub struct RunReport {
@@ -34,9 +36,10 @@ struct Plan {
 }
 
 pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
-    let llm = Llm::new(cfg.model.clone(), cfg.api_key.clone());
+    let llm = Llm::new(cfg.model.clone(), cfg.api_key.clone(), cfg.llm_base_url.clone());
     let search = Search::new();
     let fetcher = Fetcher::new();
+    let temperature = cfg.temperature;
 
     let slug = slugify(topic);
     println!("Topic: {topic}");
@@ -47,7 +50,7 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
     std::fs::create_dir_all(&drafts_dir).context("create .drafts")?;
 
     // ── Phase 1: Plan ──────────────────────────────────────────────
-    let plan = plan_research(&llm, topic).await?;
+    let plan = plan_research(&llm, topic, temperature).await?;
     println!("\n── Plan ──");
     println!("scale: {}", plan.scale);
     println!("queries ({}):", plan.queries.len());
@@ -124,19 +127,19 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
 
     // ── Phase 4: Draft ─────────────────────────────────────────────
     println!("\n── Drafting ({accepted} sources) ──");
-    let draft = draft_report(&llm, topic, &evidence).await?;
+    let draft = draft_report(&llm, topic, &evidence, temperature).await?;
     let draft_path = drafts_dir.join(format!("{slug}-draft.md"));
     std::fs::write(&draft_path, &draft).context("write draft")?;
 
     // ── Phase 5: Cite ──────────────────────────────────────────────
     println!("── Citing ──");
-    let cited = cite_report(&llm, topic, &draft, &evidence).await?;
+    let cited = cite_report(&llm, &draft, &evidence, temperature).await?;
     let cited_path = drafts_dir.join(format!("{slug}-cited.md"));
     std::fs::write(&cited_path, &cited).context("write cited draft")?;
 
     // ── Phase 6: Review ────────────────────────────────────────────
     println!("── Reviewing ──");
-    let (final_md, review_md) = review_report(&llm, &cited, &evidence).await?;
+    let (final_md, review_md) = review_report(&llm, &cited, &evidence, temperature).await?;
     let review_path = drafts_dir.join(format!("{slug}-verification.md"));
     std::fs::write(&review_path, &review_md).context("write review")?;
 
@@ -158,7 +161,7 @@ pub async fn run(cfg: &Config, topic: &str) -> Result<RunReport> {
 
 // ── Phase implementations ──────────────────────────────────────────
 
-async fn plan_research(llm: &Llm, topic: &str) -> Result<Plan> {
+async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan> {
     let sys = ChatMessage::system(
         "You are a research planner. Produce a JSON plan for a web research task.\n\
          Respond with a single JSON object:\n\
@@ -177,7 +180,7 @@ async fn plan_research(llm: &Llm, topic: &str) -> Result<Plan> {
     let user = ChatMessage::user(format!("Research topic: {topic}\nProduce the research plan JSON."));
 
     for attempt in 0..3 {
-        let raw = llm.complete_json(&[sys.clone(), user.clone()], 0.2).await?;
+        let raw = llm.complete_json(&[sys.clone(), user.clone()], temperature).await?;
         match parse_plan_json(&raw) {
             Ok(p) if !p.queries.is_empty() => return Ok(p),
             Ok(_) => eprintln!("  ⚠ plan had no queries, retry {}/3", attempt + 1),
@@ -253,7 +256,7 @@ fn build_evidence_block(evidence: &[EvidenceItem]) -> String {
     s
 }
 
-async fn draft_report(llm: &Llm, topic: &str, evidence: &[EvidenceItem]) -> Result<String> {
+async fn draft_report(llm: &Llm, topic: &str, evidence: &[EvidenceItem], temperature: f32) -> Result<String> {
     let sys = ChatMessage::system(
         "You are a research writer. Write a thorough, source-heavy research brief on the topic.\n\
          Rules:\n\
@@ -269,14 +272,14 @@ async fn draft_report(llm: &Llm, topic: &str, evidence: &[EvidenceItem]) -> Resu
         "Topic: {topic}\n\nEvidence:\n\n{evidence_block}\n\nWrite the research brief now."
     ));
 
-    llm.complete(&[sys, user], 0.3).await
+    llm.complete(&[sys, user], temperature).await
 }
 
 async fn cite_report(
     llm: &Llm,
-    _topic: &str,
     draft: &str,
     evidence: &[EvidenceItem],
+    temperature: f32,
 ) -> Result<String> {
     let sys = ChatMessage::system(
         "You are a citation verifier. Take the draft and produce a fully cited version.\n\
@@ -297,13 +300,14 @@ async fn cite_report(
         source_list.join("\n")
     ));
 
-    llm.complete(&[sys, user], 0.2).await
+    llm.complete(&[sys, user], temperature).await
 }
 
 async fn review_report(
     llm: &Llm,
     cited: &str,
     evidence: &[EvidenceItem],
+    temperature: f32,
 ) -> Result<(String, String)> {
     let sys = ChatMessage::system(
         "You are a rigorous internal research reviewer. Verify the cited brief.\n\
@@ -330,7 +334,7 @@ async fn review_report(
         source_list.join("\n")
     ));
 
-    let raw = llm.complete(&[sys, user], 0.2).await?;
+    let raw = llm.complete(&[sys, user], temperature).await?;
 
     // Split verification report from final document.
     let (review_md, final_md) = match raw.split_once("# Final Document") {

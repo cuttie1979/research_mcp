@@ -1,0 +1,22 @@
+# research_mcp configuration
+# Copy this file to `config.toml` (next to the binary or in the project dir)
+# and fill in your OpenCode Go API key. config.toml is gitignored — the key
+# stays local. The final key will be set by you.
+
+# OpenCode Go API key (required). Get it from https://opencode.ai/auth
+api_key = ""            # e.g. "sk-..."
+
+# OpenCode Go model ID
+model = "deepseek-v4-flash"
+
+# LLM API base URL (default: OpenCode Go)
+# llm_base_url = "https://opencode.ai/zen/go/v1"
+
+# Max source pages to fetch during research
+# max_sources = 8
+
+# Output directory for <slug>.md + <slug>.provenance.md
+# out_dir = "/home/user/AIDocumentStore/raw/research"
+
+# LLM temperature for drafting
+# temperature = 0.3

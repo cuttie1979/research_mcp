@@ -4,8 +4,6 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -59,10 +57,10 @@ pub struct Llm {
 }
 
 impl Llm {
-    pub fn new(model: String, api_key: String) -> Self {
+    pub fn new(model: String, api_key: String, base_url: String) -> Self {
         Self {
             client: reqwest::Client::new(),
-            base_url: DEFAULT_BASE_URL.to_string(),
+            base_url,
             model,
             api_key,
         }

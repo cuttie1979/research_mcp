@@ -1,12 +1,12 @@
+mod config;
 mod fetch;
 mod llm;
 mod search;
 mod slug;
 mod workflow;
 
-use std::path::PathBuf;
-
 use clap::Parser;
+use config::Config;
 
 #[derive(Parser)]
 #[command(name = "research_mcp", version, about = "Deep research tool — Feynman port with OpenCode Go LLM + DuckDuckGo search")]
@@ -14,45 +14,64 @@ struct Cli {
     /// Research topic (1-2 sentences)
     topic: String,
 
-    /// OpenCode Go model ID
-    #[arg(long, default_value = "deepseek-v4-flash")]
-    model: String,
+    /// OpenCode Go model ID (overrides config.toml)
+    #[arg(long)]
+    model: Option<String>,
 
-    /// Max source pages to fetch
-    #[arg(long, default_value = "8")]
-    max_sources: usize,
+    /// Max source pages to fetch (overrides config.toml)
+    #[arg(long)]
+    max_sources: Option<usize>,
 
-    /// Output directory for .md + .provenance.md
-    #[arg(long, default_value = "/home/user/AIDocumentStore/raw/research")]
-    out_dir: PathBuf,
+    /// Output directory (overrides config.toml)
+    #[arg(long)]
+    out_dir: Option<std::path::PathBuf>,
 
-    /// OpenCode Go API key (falls back to env OPENCODE_GO_API_KEY)
-    #[arg(long, env = "OPENCODE_GO_API_KEY")]
+    /// OpenCode Go API key (overrides config.toml and env)
+    #[arg(long)]
     api_key: Option<String>,
+
+    /// Path to config file
+    #[arg(long)]
+    config: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let api_key = cli
-        .api_key
+    // Load config from explicit path, or auto-discover config.toml.
+    let config_path = cli
+        .config
         .clone()
-        .or_else(|| std::env::var("OPENCODE_GO_API_KEY").ok())
-        .filter(|k| !k.is_empty());
-    if api_key.is_none() {
-        eprintln!("⚠  OPENCODE_GO_API_KEY not set. Set it via env or --api-key before running.");
-        std::process::exit(2);
+        .or_else(|| Config::candidate_paths().into_iter().find(|p| p.exists()));
+    let mut cfg = Config::load(config_path.as_deref())?;
+
+    // CLI overrides.
+    if let Some(m) = &cli.model {
+        cfg.model = m.clone();
+    }
+    if let Some(n) = cli.max_sources {
+        cfg.max_sources = n;
+    }
+    if let Some(d) = &cli.out_dir {
+        cfg.out_dir = d.clone();
+    }
+    if let Some(k) = &cli.api_key {
+        cfg.api_key = Some(k.clone());
     }
 
-    let cfg = workflow::Config {
-        model: cli.model,
-        api_key: api_key.unwrap(),
-        out_dir: cli.out_dir,
-        max_sources: cli.max_sources,
+    let api_key = cfg.require_api_key()?;
+
+    let wf_cfg = workflow::Config {
+        model: cfg.model.clone(),
+        api_key,
+        llm_base_url: cfg.llm_base_url.clone(),
+        out_dir: cfg.out_dir.clone(),
+        max_sources: cfg.max_sources,
+        temperature: cfg.temperature,
     };
 
-    let report = workflow::run(&cfg, &cli.topic).await?;
+    let report = workflow::run(&wf_cfg, &cli.topic).await?;
     println!();
     println!("✔ Research complete.");
     println!("  slug: {}", report.slug);
