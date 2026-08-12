@@ -14,10 +14,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::IntoContents;
-use rmcp::model::{CallToolResponse, ListToolsResult};
-use rmcp::service::{RequestContext, RoleServer, serve_server};
+use rmcp::service::serve_server;
 use rmcp::transport::stdio;
-use rmcp::{ErrorData, RmcpError, ServerHandler, tool, tool_router};
+use rmcp::{ErrorData, RmcpError, tool, tool_router};
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +36,7 @@ pub struct SubmitParams {
     pub priority: Option<i64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BatchSubmitParams {
     /// List of research topics
@@ -60,12 +60,6 @@ pub struct ListParams {
 pub struct RunIdParams {
     /// Research run ID
     pub run_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct BatchIdParams {
-    /// Batch ID (cancels/resumes all runs in the batch)
-    pub batch_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -196,6 +190,7 @@ impl ResearchMcp {
         Self { db }
     }
 
+    #[allow(dead_code)]
     pub fn spawn(db: Arc<Db>, worker: Worker) -> Result<()> {
         // Start the worker in the background.
         tokio::spawn(async move {

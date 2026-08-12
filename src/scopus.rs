@@ -145,7 +145,7 @@ impl ScopusSearchResponse {
                     scopus_id,
                     doi: e.doi.clone(),
                     title: clean(&e.title),
-                    creators: e.creator.split(';').map(|c| clean(c)).filter(|c| !c.is_empty()).collect(),
+                    creators: e.creator.split(';').map(clean).filter(|c| !c.is_empty()).collect(),
                     journal: e.journal.map(|j| clean(&j)),
                     year,
                     citedby,

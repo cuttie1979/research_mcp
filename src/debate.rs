@@ -1,12 +1,13 @@
 //! Multi-agent debate engine — adapted from MiroShark's belief state pattern.
 //!
 //! N agents with distinct initial beliefs debate a cited draft. Each round:
-//! 1. Every agent writes a short argument from its current belief (content +
-//!    reference critique).
-//! 2. Every agent reads the others' arguments and updates its belief
-//!    (LLM-based: strong arguments shift positions, weak ones don't).
-//! After N rounds the engine measures consensus (positions, spread,
-//! convergence) and produces a debate summary for the review phase.
+//! - Every agent writes a short argument from its current belief (content +
+//!   reference critique).
+//! - Every agent reads the others' arguments and updates its belief
+//!   (LLM-based: strong arguments shift positions, weak ones don't).
+//!
+//! After N rounds the engine measures consensus and produces a debate summary
+//! for the review phase.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

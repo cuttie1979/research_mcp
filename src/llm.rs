@@ -57,6 +57,7 @@ pub struct Llm {
 }
 
 impl Llm {
+    #[allow(dead_code)]
     pub fn new(model: String, api_key: String, base_url: String) -> Self {
         Self::with_timeout(model, api_key, base_url, 120)
     }

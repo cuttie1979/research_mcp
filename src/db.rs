@@ -10,10 +10,12 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+#[allow(dead_code)]
 pub const RUN_STATUSES: &[&str] = &[
     "queued", "running", "complete", "failed", "blocked", "cancelled",
 ];
 
+#[allow(dead_code)]
 pub const PHASES: &[&str] = &[
     "planning", "searching", "fetching", "drafting", "citing", "reviewing", "delivering",
 ];
@@ -49,6 +51,7 @@ pub struct SessionData {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PhaseEvent {
     pub id: i64,
     pub run_id: String,
@@ -280,7 +283,7 @@ impl Db {
     }
 
     pub fn list_by_batch(&self, batch_id: &str) -> Result<Vec<ResearchRun>> {
-        self.list_runs_filtered(&format!("batch_id = ?1"), vec![batch_id.to_string()])
+        self.list_runs_filtered("batch_id = ?1", vec![batch_id.to_string()])
     }
 
     fn list_runs_filtered(&self, where_clause: &str, args: Vec<String>) -> Result<Vec<ResearchRun>> {
@@ -350,6 +353,7 @@ impl Db {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn increment_attempt(&self, id: &str) -> Result<i64> {
         self.conn.lock().unwrap().execute(
             "UPDATE research_runs SET attempt = attempt + 1, updated_at = ?2 WHERE id = ?1",
@@ -504,6 +508,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    #[allow(dead_code)]
     pub fn count_running(&self) -> Result<i64> {
         let n: i64 = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM research_runs WHERE status = 'running'",

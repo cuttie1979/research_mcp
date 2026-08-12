@@ -30,6 +30,7 @@ pub struct Config {
     pub llm_timeout_secs: u64,
 }
 
+#[allow(dead_code)]
 pub struct RunReport {
     pub slug: String,
     pub report_path: PathBuf,
@@ -105,8 +106,10 @@ impl Engine {
             log_info!("── planning ──");
             self.begin_phase(run, "planning")?;
             let plan = plan_research(&llm, &topic, temperature).await?;
-            let mut s = SessionData::default();
-            s.plan_json = Some(serde_json::to_string(&plan)?);
+            let s = SessionData {
+                plan_json: Some(serde_json::to_string(&plan)?),
+                ..Default::default()
+            };
             self.db.save_session(&run.id, &s)?;
             self.db.log_phase(&run.id, "planning", "ok", "plan produced")?;
             plan
@@ -147,8 +150,10 @@ impl Engine {
                         self.begin_phase(run, "fetching")?;
                         let (ev, rej) =
                             fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
-                        let mut sess = SessionData::default();
-                        sess.sources_json = Some(serde_json::to_string(&ev)?);
+                        let sess = SessionData {
+                            sources_json: Some(serde_json::to_string(&ev)?),
+                            ..Default::default()
+                        };
                         self.db.save_session(&run.id, &sess)?;
                         self.db.log_phase(&run.id, "fetching", "ok", format!("{} sources accepted", ev.len()).as_str())?;
                         (ev, rej)
@@ -166,8 +171,10 @@ impl Engine {
                         gathered.pubmed.len(),
                         gathered.scopus.len()
                     );
-                    let mut s = SessionData::default();
-                    s.sources_json = Some(serde_json::to_string(&gathered)?);
+                    let s = SessionData {
+                        sources_json: Some(serde_json::to_string(&gathered)?),
+                        ..Default::default()
+                    };
                     self.db.save_session(&run.id, &s)?;
                     self.db.log_phase(&run.id, "searching", "ok", "search complete")?;
 
@@ -175,8 +182,10 @@ impl Engine {
                     self.begin_phase(run, "fetching")?;
                     let (ev, rej) =
                         fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
-                    let mut sess = SessionData::default();
-                    sess.sources_json = Some(serde_json::to_string(&ev)?);
+                    let sess = SessionData {
+                        sources_json: Some(serde_json::to_string(&ev)?),
+                        ..Default::default()
+                    };
                     self.db.save_session(&run.id, &sess)?;
                     self.db.log_phase(&run.id, "fetching", "ok", format!("{} sources accepted", ev.len()).as_str())?;
                     (ev, rej)
@@ -199,8 +208,10 @@ impl Engine {
             log_info!("\n── drafting ──");
             self.begin_phase(run, "drafting")?;
             let d = draft_report(&llm, &topic, &evidence, temperature).await?;
-            let mut s = SessionData::default();
-            s.draft_text = Some(d.clone());
+            let s = SessionData {
+                draft_text: Some(d.clone()),
+                ..Default::default()
+            };
             self.db.save_session(&run.id, &s)?;
             self.db.log_phase(&run.id, "drafting", "ok", "draft written")?;
             d
@@ -215,8 +226,10 @@ impl Engine {
             log_info!("── citing ──");
             self.begin_phase(run, "citing")?;
             let c = cite_report(&llm, &draft, &evidence, temperature).await?;
-            let mut s = SessionData::default();
-            s.cited_text = Some(c.clone());
+            let s = SessionData {
+                cited_text: Some(c.clone()),
+                ..Default::default()
+            };
             self.db.save_session(&run.id, &s)?;
             self.db.log_phase(&run.id, "citing", "ok", "citations verified")?;
             c
@@ -241,8 +254,10 @@ impl Engine {
                 d.consensus.spread,
                 d.consensus.convergence
             );
-            let mut s = SessionData::default();
-            s.debate_text = Some(serde_json::to_string(&d)?);
+            let s = SessionData {
+                debate_text: Some(serde_json::to_string(&d)?),
+                ..Default::default()
+            };
             self.db.save_session(&run.id, &s)?;
             self.db.log_phase(&run.id, "debating", "ok", "debate complete")?;
             d
@@ -256,8 +271,10 @@ impl Engine {
             log_info!("── reviewing (with debate input) ──");
             self.begin_phase(run, "reviewing")?;
             let (f, r) = review_report(&llm, &cited, &evidence, &debate, temperature).await?;
-            let mut s = SessionData::default();
-            s.review_text = Some(r.clone());
+            let s = SessionData {
+                review_text: Some(r.clone()),
+                ..Default::default()
+            };
             self.db.save_session(&run.id, &s)?;
             self.db.log_phase(&run.id, "reviewing", "ok", "review complete")?;
             (f, r)
@@ -467,10 +484,7 @@ async fn fetch_sources(
     for mut p in scopus_papers {
         let crossref_abs = match &p.doi {
             Some(doi) if scopus_client.is_some() => {
-                match scopus_client.unwrap().abstract_by_doi(doi).await {
-                    Ok(a) => a,
-                    Err(_) => String::new(),
-                }
+                scopus_client.unwrap().abstract_by_doi(doi).await.unwrap_or_default()
             }
             _ => String::new(),
         };
@@ -789,6 +803,7 @@ async fn review_report(
     Ok((final_md, review_md))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_provenance(
     topic: &str,
     _slug: &str,
@@ -832,9 +847,7 @@ fn append_debate_summary(final_md: &str, debate: &DebateResult) -> String {
 
     let mut s = String::new();
     s.push_str("\n\n---\n\n## Agent Debate Summary\n\n");
-    s.push_str(&format!(
-        "Five expert agents with distinct beliefs debated this brief before review. "
-    ));
+    s.push_str("Five expert agents with distinct beliefs debated this brief before review. ");
     s.push_str(&format!(
         "Final positions: mean **{:.2}**, spread **{:.2}**, convergence **{:+.2}** (positive = converged).\n\n",
         debate.consensus.mean_position, debate.consensus.spread, debate.consensus.convergence

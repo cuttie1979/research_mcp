@@ -229,16 +229,14 @@ fn parse_feed(xml: &str) -> Result<Vec<ArxivPaper>> {
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                if name == "category" && in_entry {
-                    if let Some(paper) = current.as_mut() {
-                        if let Ok(attr) = e.try_get_attribute("term") {
+                if name == "category" && in_entry
+                    && let Some(paper) = current.as_mut()
+                        && let Ok(attr) = e.try_get_attribute("term") {
                             paper.categories.push(
                                 attr.map(|a| a.unescape_value().map(|v| v.into_owned()).unwrap_or_default())
                                     .unwrap_or_default(),
                             );
                         }
-                    }
-                }
             }
             Ok(Event::Text(t)) => {
                 if !in_entry || current.is_none() {
@@ -275,11 +273,10 @@ fn parse_feed(xml: &str) -> Result<Vec<ArxivPaper>> {
                 match name.as_str() {
                     "entry" => {
                         in_entry = false;
-                        if let Some(paper) = current.take() {
-                            if !paper.arxiv_id.is_empty() {
+                        if let Some(paper) = current.take()
+                            && !paper.arxiv_id.is_empty() {
                                 papers.push(paper);
                             }
-                        }
                     }
                     "author" => in_author = false,
                     _ => current_tag.clear(),

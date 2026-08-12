@@ -52,15 +52,14 @@ impl Config {
     pub fn load(path: Option<&std::path::Path>) -> Result<Self> {
         let mut cfg = Config::default();
 
-        if let Some(p) = path {
-            if p.exists() {
+        if let Some(p) = path
+            && p.exists() {
                 let raw = std::fs::read_to_string(p)
                     .with_context(|| format!("read config {}", p.display()))?;
                 let file_cfg: Config = toml::from_str(&raw)
                     .with_context(|| format!("parse config {}", p.display()))?;
                 cfg.apply(file_cfg);
             }
-        }
 
         // Env fallback for the API key (never stored in git).
         if cfg.api_key.is_none() {
@@ -115,11 +114,10 @@ impl Config {
     pub fn candidate_paths() -> Vec<PathBuf> {
         let mut paths = vec![PathBuf::from("config.toml")];
         // Also look next to the executable (MCP servers run from arbitrary CWD).
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent() {
                 paths.push(dir.join("config.toml"));
             }
-        }
         if let Ok(home) = std::env::var("HOME") {
             paths.push(PathBuf::from(home).join(".config/research_mcp/config.toml"));
         }
