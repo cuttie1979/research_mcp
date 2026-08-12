@@ -26,3 +26,6 @@ model = "deepseek-v4-flash"
 
 # LLM temperature for drafting
 # temperature = 0.3
+
+# LLM request timeout in seconds (0 = no timeout)
+# llm_timeout_secs = 120

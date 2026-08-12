@@ -27,6 +27,7 @@ pub struct Config {
     pub out_dir: PathBuf,
     pub max_sources: usize,
     pub temperature: f32,
+    pub llm_timeout_secs: u64,
 }
 
 pub struct RunReport {
@@ -76,7 +77,7 @@ impl Engine {
     pub async fn execute_run(&self, run: &ResearchRun) -> Result<bool> {
         let topic = run.topic.clone();
         let slug = run.slug.clone();
-        let llm = Llm::new(self.cfg.model.clone(), self.cfg.api_key.clone(), self.cfg.llm_base_url.clone());
+        let llm = Llm::with_timeout(self.cfg.model.clone(), self.cfg.api_key.clone(), self.cfg.llm_base_url.clone(), self.cfg.llm_timeout_secs);
         let search = Search::new();
         let fetcher = Fetcher::new();
         let arxiv = Arxiv::new();
@@ -495,9 +496,21 @@ async fn fetch_sources(
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    // Dynamic context budget: stop fetching web sources once the accumulated
+    // evidence text approaches the per-source cap (12k chars × max_sources),
+    // so a large arXiv/PubMed/Scopus haul doesn't blow the LLM context.
+    let context_budget = 12000usize.saturating_mul(max_sources);
+    let mut used_chars = evidence.iter().map(|e| e.text.chars().count()).sum::<usize>();
+
     for r in web_results.iter().take(max_sources) {
         if evidence.iter().any(|e| e.url == r.url) {
             continue;
+        }
+        if used_chars >= context_budget {
+            log_info!(
+                "  ⚠ context budget reached ({used_chars}/{context_budget} chars) — stopping web fetches"
+            );
+            break;
         }
         log_info!("── Fetch: {}", r.url);
         match fetcher.fetch(&r.url, 12000).await {
@@ -507,6 +520,7 @@ async fn fetch_sources(
                     continue;
                 }
                 accepted += 1;
+                used_chars += text.chars().count();
                 evidence.push(EvidenceItem {
                     id: format!("S{}", accepted),
                     title: r.title.clone(),

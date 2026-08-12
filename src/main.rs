@@ -108,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
         out_dir: cfg.out_dir.clone(),
         max_sources: cfg.max_sources,
         temperature: cfg.temperature,
+        llm_timeout_secs: cfg.llm_timeout_secs,
     };
 
     let db = Arc::new(db::Db::open(&cfg.db_path)?);

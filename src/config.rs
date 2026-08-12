@@ -27,6 +27,8 @@ pub struct Config {
     pub db_path: PathBuf,
     /// Temperature for drafting.
     pub temperature: f32,
+    /// LLM request timeout in seconds (0 = no timeout).
+    pub llm_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             out_dir: PathBuf::from("/home/user/AIDocumentStore/raw/research"),
             db_path: PathBuf::from("/home/user/AIHome/research_mcp/research.db"),
             temperature: 0.3,
+            llm_timeout_secs: 120,
         }
     }
 }
@@ -95,6 +98,9 @@ impl Config {
         }
         if other.temperature != 0.0 {
             self.temperature = other.temperature;
+        }
+        if other.llm_timeout_secs != 0 {
+            self.llm_timeout_secs = other.llm_timeout_secs;
         }
     }
 

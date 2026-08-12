@@ -63,6 +63,27 @@ pub struct Db {
     conn: std::sync::Arc<Mutex<Connection>>,
 }
 
+fn run_from_row(r: &rusqlite::Row) -> rusqlite::Result<ResearchRun> {
+    Ok(ResearchRun {
+        id: r.get(0)?,
+        topic: r.get(1)?,
+        slug: r.get(2)?,
+        status: r.get(3)?,
+        phase: r.get(4)?,
+        progress: r.get(5)?,
+        error: r.get(6)?,
+        report_path: r.get(7)?,
+        provenance_path: r.get(8)?,
+        batch_id: r.get(9)?,
+        priority: r.get(10)?,
+        attempt: r.get(11)?,
+        created_at: r.get(12)?,
+        updated_at: r.get(13)?,
+        started_at: r.get(14)?,
+        completed_at: r.get(15)?,
+    })
+}
+
 impl Db {
     pub fn open(path: &std::path::Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -145,13 +166,41 @@ impl Db {
     pub fn create_run(&self, topic: &str, slug: &str, batch_id: Option<&str>, priority: i64) -> Result<ResearchRun> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Self::now();
+        // Slug collision handling: if this slug already exists, append -2, -3...
+        let final_slug = self.unique_slug(slug)?;
         self.conn.lock().unwrap().execute(
             "INSERT INTO research_runs
                 (id, topic, slug, status, phase, progress, batch_id, priority, attempt, created_at, updated_at)
              VALUES (?1, ?2, ?3, 'queued', 'planning', 0, ?4, ?5, 1, ?6, ?6)",
-            params![id, topic, slug, batch_id, priority, now],
+            params![id, topic, final_slug, batch_id, priority, now],
         )?;
         self.get_run(&id)?.context("run created but not found")
+    }
+
+    /// Ensure a slug is unique among existing runs: append -2, -3, ... on collision.
+    fn unique_slug(&self, slug: &str) -> Result<String> {
+        let conn = self.conn.lock().unwrap();
+        let exists = |s: &str| -> bool {
+            conn.query_row(
+                "SELECT COUNT(*) FROM research_runs WHERE slug = ?1",
+                params![s],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false)
+        };
+
+        if !exists(slug) {
+            return Ok(slug.to_string());
+        }
+        for n in 2..100 {
+            let candidate = format!("{slug}-{n}");
+            if !exists(&candidate) {
+                return Ok(candidate);
+            }
+        }
+        // Extremely unlikely fallback: timestamp suffix.
+        Ok(format!("{slug}-{}", chrono::Utc::now().timestamp()))
     }
 
     pub fn get_run(&self, id: &str) -> Result<Option<ResearchRun>> {
@@ -326,8 +375,41 @@ impl Db {
     }
 
     /// Next run to process: highest priority, then oldest. Only 'queued'.
+    /// Batch coherence: if a batch already has a running run, the next queued
+    /// run from that same batch is preferred so batches don't interleave.
     pub fn next_queued(&self) -> Result<Option<ResearchRun>> {
         let conn = self.conn.lock().unwrap();
+
+        // 1. Any batch currently running? Prefer its next queued member.
+        let active_batch: Option<String> = conn
+            .query_row(
+                "SELECT batch_id FROM research_runs
+                 WHERE status = 'running' AND batch_id IS NOT NULL
+                 LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(batch) = active_batch {
+            let row = conn
+                .query_row(
+                    "SELECT id, topic, slug, status, phase, progress, error,
+                            report_path, provenance_path, batch_id, priority, attempt,
+                            created_at, updated_at, started_at, completed_at
+                     FROM research_runs
+                     WHERE status = 'queued' AND batch_id = ?1
+                     ORDER BY priority DESC, created_at ASC
+                     LIMIT 1",
+                    params![batch],
+                    run_from_row,
+                )
+                .optional()?;
+            if row.is_some() {
+                return Ok(row);
+            }
+        }
+
+        // 2. Otherwise: highest priority, oldest first, any batch.
         let row = conn
             .query_row(
                 "SELECT id, topic, slug, status, phase, progress, error,
@@ -338,26 +420,7 @@ impl Db {
                  ORDER BY priority DESC, created_at ASC
                  LIMIT 1",
                 [],
-                |r| {
-                    Ok(ResearchRun {
-                        id: r.get(0)?,
-                        topic: r.get(1)?,
-                        slug: r.get(2)?,
-                        status: r.get(3)?,
-                        phase: r.get(4)?,
-                        progress: r.get(5)?,
-                        error: r.get(6)?,
-                        report_path: r.get(7)?,
-                        provenance_path: r.get(8)?,
-                        batch_id: r.get(9)?,
-                        priority: r.get(10)?,
-                        attempt: r.get(11)?,
-                        created_at: r.get(12)?,
-                        updated_at: r.get(13)?,
-                        started_at: r.get(14)?,
-                        completed_at: r.get(15)?,
-                    })
-                },
+                run_from_row,
             )
             .optional()?;
         Ok(row)
@@ -542,5 +605,65 @@ mod tests {
         assert_eq!(completed[0].id, r1.id);
         let all = db.list_runs(None, 10, 0).unwrap();
         assert_eq!(all.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::*;
+
+    fn test_db() -> Db {
+        let path = std::env::temp_dir().join(format!("research_mcp_slug_{}.db", uuid::Uuid::new_v4()));
+        Db::open(&path).unwrap()
+    }
+
+    #[test]
+    fn slug_collision_appends_suffix() {
+        let db = test_db();
+        let r1 = db.create_run("Same topic", "same-topic", None, 0).unwrap();
+        assert_eq!(r1.slug, "same-topic");
+        let r2 = db.create_run("Same topic", "same-topic", None, 0).unwrap();
+        assert_eq!(r2.slug, "same-topic-2");
+        let r3 = db.create_run("Same topic", "same-topic", None, 0).unwrap();
+        assert_eq!(r3.slug, "same-topic-3");
+        // Distinct slugs stay untouched.
+        let r4 = db.create_run("Other topic", "other-topic", None, 0).unwrap();
+        assert_eq!(r4.slug, "other-topic");
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    fn test_db() -> Db {
+        let path = std::env::temp_dir().join(format!("research_mcp_batch_{}.db", uuid::Uuid::new_v4()));
+        Db::open(&path).unwrap()
+    }
+
+    #[test]
+    fn next_queued_prefers_active_batch() {
+        let db = test_db();
+        // Two batches, each with 2 runs.
+        let b1a = db.create_run("b1 topic 1", "b1-t1", Some("B1"), 0).unwrap();
+        let _b1b = db.create_run("b1 topic 2", "b1-t2", Some("B1"), 0).unwrap();
+        let b2a = db.create_run("b2 topic 1", "b2-t1", Some("B2"), 10).unwrap();
+        let _b2b = db.create_run("b2 topic 2", "b2-t2", Some("B2"), 10).unwrap();
+
+        // B2 has higher priority — first pick is b2a.
+        assert_eq!(db.next_queued().unwrap().unwrap().id, b2a.id);
+        db.set_run_started(&b2a.id).unwrap();
+
+        // B2 is now running → next pick must be b2's second run, not b1a.
+        let next = db.next_queued().unwrap().unwrap();
+        assert_eq!(next.batch_id.as_deref(), Some("B2"));
+        assert_eq!(next.slug, "b2-t2");
+
+        db.set_complete(&b2a.id, "r", "p").unwrap();
+        db.set_complete(&next.id, "r", "p").unwrap();
+
+        // B2 done → now b1a (priority 0).
+        let next = db.next_queued().unwrap().unwrap();
+        assert_eq!(next.id, b1a.id);
     }
 }

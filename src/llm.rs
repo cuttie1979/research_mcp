@@ -58,8 +58,16 @@ pub struct Llm {
 
 impl Llm {
     pub fn new(model: String, api_key: String, base_url: String) -> Self {
+        Self::with_timeout(model, api_key, base_url, 120)
+    }
+
+    pub fn with_timeout(model: String, api_key: String, base_url: String, timeout_secs: u64) -> Self {
+        let mut builder = reqwest::Client::builder();
+        if timeout_secs > 0 {
+            builder = builder.timeout(std::time::Duration::from_secs(timeout_secs));
+        }
         Self {
-            client: reqwest::Client::new(),
+            client: builder.build().expect("build llm http client"),
             base_url,
             model,
             api_key,
