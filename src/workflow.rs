@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::arxiv::{Arxiv, ArxivPaper};
 use crate::db::{Db, ResearchRun, SessionData};
+use crate::debate::DebateResult;
 use crate::fetch::Fetcher;
 use crate::llm::{ChatMessage, Llm};
 use crate::pubmed::{Pubmed, PubmedPaper};
@@ -58,7 +59,8 @@ const PROGRESS: &[(&str, i64)] = &[
     ("searching", 30),
     ("fetching", 50),
     ("drafting", 70),
-    ("citing", 85),
+    ("citing", 80),
+    ("debating", 88),
     ("reviewing", 95),
     ("delivering", 100),
 ];
@@ -221,14 +223,38 @@ impl Engine {
         let cited_path = drafts_dir.join(format!("{slug}-cited.md"));
         std::fs::write(&cited_path, &cited).context("write cited draft")?;
 
-        // ── Phase 6: reviewing ──────────────────────────────────────
+        // ── Phase 6: debate (multi-agent) ───────────────────────────
+        // Agents with distinct beliefs critique the cited draft (content AND
+        // references) and converge. Output feeds the review phase.
+        let debate: DebateResult = if let Some(d) = session().debate_text {
+            serde_json::from_str(&d).context("parse saved debate")?
+        } else {
+            log_info!("── debating ({} agents) ──", crate::debate::DEFAULT_AGENT_COUNT);
+            self.begin_phase(run, "debating")?;
+            let d = crate::debate::run_debate(
+                &llm, &topic, &cited, &evidence, temperature, crate::debate::DEFAULT_ROUNDS,
+            )
+            .await?;
+            log_info!(
+                "  debate done: spread {:.2}, convergence {:+.2}",
+                d.consensus.spread,
+                d.consensus.convergence
+            );
+            let mut s = SessionData::default();
+            s.debate_text = Some(serde_json::to_string(&d)?);
+            self.db.save_session(&run.id, &s)?;
+            self.db.log_phase(&run.id, "debating", "ok", "debate complete")?;
+            d
+        };
+
+        // ── Phase 7: reviewing (with debate consensus) ──────────────
         let (final_md, review_md): (String, String) = if let Some(r) = session().review_text {
             // Review done; final doc = cited (no revision was persisted separately).
             (cited.clone(), r)
         } else {
-            log_info!("── reviewing ──");
+            log_info!("── reviewing (with debate input) ──");
             self.begin_phase(run, "reviewing")?;
-            let (f, r) = review_report(&llm, &cited, &evidence, temperature).await?;
+            let (f, r) = review_report(&llm, &cited, &evidence, &debate, temperature).await?;
             let mut s = SessionData::default();
             s.review_text = Some(r.clone());
             self.db.save_session(&run.id, &s)?;
@@ -238,7 +264,7 @@ impl Engine {
         let review_path = drafts_dir.join(format!("{slug}-verification.md"));
         std::fs::write(&review_path, &review_md).context("write review")?;
 
-        // ── Phase 7: delivering ─────────────────────────────────────
+        // ── Phase 8: delivering ─────────────────────────────────────
         log_info!("── delivering ──");
         self.begin_phase(run, "delivering")?;
         let report_path = out_dir.join(format!("{slug}.md"));
@@ -672,11 +698,17 @@ async fn review_report(
     llm: &Llm,
     cited: &str,
     evidence: &[EvidenceItem],
+    debate: &DebateResult,
     temperature: f32,
 ) -> Result<(String, String)> {
     let sys = ChatMessage::system(
         "You are a rigorous internal research reviewer. Verify the cited brief.\n\
          Checks: unsupported claims, logical gaps, single-source critical claims, overstated confidence, invalid source IDs.\n\
+         You receive the output of a multi-agent debate that critiqued the brief's CONTENT and REFERENCES.\n\
+         Use it as input:\n\
+         - Claims flagged in consensus_points must be double-checked; if a FATAL issue is confirmed, fix it.\n\
+         - Claims in dissensus_points must be marked with appropriate hedging or attributed as contested.\n\
+         - Treat debate findings as advisory, not authoritative — verify each against the sources yourself.\n\
          Produce:\n\
          1. A verification report with findings marked FATAL / MAJOR / MINOR and the checks performed.\n\
          2. If there are FATAL issues, the full corrected markdown document (complete, with ## Sources).\n\
@@ -694,8 +726,32 @@ async fn review_report(
         .iter()
         .map(|e| format!("[{0}] {1} — {2}", e.id, e.title, e.url))
         .collect();
+
+    let consensus_text = if debate.consensus.consensus_points.is_empty() && debate.consensus.dissensus_points.is_empty() {
+        debate.consensus.summary.clone()
+    } else {
+        format!(
+            "Consensus points:\n{}\n\nDissensus points:\n{}\n\n{}",
+            debate
+                .consensus
+                .consensus_points
+                .iter()
+                .map(|p| format!("- {p}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            debate
+                .consensus
+                .dissensus_points
+                .iter()
+                .map(|p| format!("- {p}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            debate.consensus.summary
+        )
+    };
+
     let user = ChatMessage::user(format!(
-        "Available sources:\n{}\n\nCited draft to review:\n\n{cited}\n\nProduce the verification report and final document.",
+        "Available sources:\n{}\n\nDebate outcome:\n{consensus_text}\n\nCited draft to review:\n\n{cited}\n\nProduce the verification report and final document.",
         source_list.join("\n")
     ));
 

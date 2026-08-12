@@ -3,6 +3,7 @@ mod log;
 mod arxiv;
 mod config;
 mod db;
+mod debate;
 mod fetch;
 mod llm;
 mod mcp;
