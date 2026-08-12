@@ -110,6 +110,14 @@ Inspired by:
 - [MiroShark/MiroShark](https://github.com/MiroShark/MiroShark) (AGPL-3.0) —
   multi-agent belief state + debate pattern (reimplemented, LLM-based)
 
+## Disclaimer
+
+**Use at your own risk.** The software is provided "as is", without warranty
+of any kind (see [LICENSE.md](LICENSE.md)). Generated research briefs are
+AI-assisted and may contain errors, omissions, or hallucinations. Always
+verify claims against the cited primary sources. This tool does not provide
+professional, medical, financial, or legal advice.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are tracked in
