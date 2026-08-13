@@ -13,6 +13,8 @@ impl Fetcher {
     }
 
     /// Fetch a URL and return cleaned plain text, truncated to `max_chars`.
+    /// When truncation occurs a marker is appended so downstream consumers
+    /// can report "retrieval truncated" as a fact instead of guessing.
     pub async fn fetch(&self, url: &str, max_chars: usize) -> Result<String> {
         let resp = self
             .client
@@ -44,10 +46,25 @@ impl Fetcher {
         };
 
         let text = text.trim().to_string();
-        if text.chars().count() > max_chars {
-            Ok(text.chars().take(max_chars).collect())
+        let count = text.chars().count();
+        if count > max_chars {
+            let mut truncated: String = text.chars().take(max_chars).collect();
+            truncated.push_str(&format!(
+                "\n\n[...TRUNCATED at {max_chars} chars — full content is ~{count} chars and exceeds the fetch cap...]"
+            ));
+            Ok(truncated)
         } else {
             Ok(text)
+        }
+    }
+
+    /// Per-domain max-chars cap. arXiv HTML full text is large; generic pages
+    /// stay small. Returns the cap for a URL.
+    pub fn cap_for_url(&self, url: &str) -> usize {
+        if url.contains("arxiv.org/html/") || url.contains("arxiv.org/pdf/") {
+            100_000
+        } else {
+            12_000
         }
     }
 }
@@ -97,5 +114,24 @@ mod tests {
         let text = f.fetch("https://www.rust-lang.org/", 2000).await.expect("fetch should work");
         assert!(text.chars().count() >= 100, "expected meaningful content, got {} chars", text.chars().count());
         log_info!("fetched {} chars, starts with: {}", text.chars().count(), text.chars().take(120).collect::<String>());
+    }
+}
+
+#[cfg(test)]
+mod fulltext_tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "live fetch test — run with --ignored"]
+    async fn arxiv_html_fulltext_not_truncated_at_12k() {
+        let f = Fetcher::new();
+        let url = "https://arxiv.org/html/2607.29378";
+        let cap = f.cap_for_url(url);
+        assert_eq!(cap, 100_000, "arxiv HTML should get the large cap");
+        let text = f.fetch(url, cap).await.expect("fetch should work");
+        assert!(text.chars().count() > 12_000, "full text should exceed the old 12k cap, got {}", text.chars().count());
+        // The intro gets cut at 12k; methodology/results should appear beyond it.
+        assert!(!text.contains("[...TRUNCATED"), "should not be truncated at 100k");
+        println!("fetched {} chars", text.chars().count());
     }
 }

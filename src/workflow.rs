@@ -446,20 +446,38 @@ async fn fetch_sources(
     let mut rejected: Vec<String> = Vec::new();
 
     for p in arxiv_papers {
+        // Full-text fetch: arXiv serves arxiv.org/html/{id} for most papers.
+        // Try to get the full text so methodology/results reach the LLM;
+        // fall back to the abstract-only evidence if the fetch fails.
+        let mut full_text: Option<String> = None;
+        let html_url = format!("https://arxiv.org/html/{}", p.arxiv_id);
+        match fetcher.fetch(&html_url, fetcher.cap_for_url(&html_url)).await {
+            Ok(t) if t.chars().count() >= 200 => {
+                full_text = Some(t);
+            }
+            _ => {}
+        }
+        // The paper's own page already covers the abstract; include both.
+        let mut text = format!(
+            "Authors: {}\nCategories: {}\nPublished: {}\n\nAbstract:\n{}",
+            p.authors.join(", "),
+            p.categories.join(", "),
+            p.published.clone().unwrap_or_default(),
+            p.abstract_text
+        );
+        if let Some(ft) = &full_text {
+            text.push_str("\n\n--- FULL TEXT (arxiv.org/html) ---\n\n");
+            text.push_str(ft);
+        }
         accepted += 1;
         evidence.push(EvidenceItem {
             id: format!("S{}", accepted),
             title: format!("{} (arXiv:{})", p.title, p.arxiv_id),
-            url: p.url.clone(),
+            url: html_url,
             snippet: String::new(),
-            text: format!(
-                "Authors: {}\nCategories: {}\nPublished: {}\n\nAbstract:\n{}",
-                p.authors.join(", "),
-                p.categories.join(", "),
-                p.published.clone().unwrap_or_default(),
-                p.abstract_text
-            ),
+            text,
         });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     for p in pubmed_papers {
@@ -527,7 +545,8 @@ async fn fetch_sources(
             break;
         }
         log_info!("── Fetch: {}", r.url);
-        match fetcher.fetch(&r.url, 12000).await {
+        let cap = fetcher.cap_for_url(&r.url);
+        match fetcher.fetch(&r.url, cap).await {
             Ok(text) => {
                 if text.chars().count() < 200 {
                     rejected.push(format!("{} (too short)", r.url));

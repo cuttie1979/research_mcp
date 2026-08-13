@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- arXiv full-text retrieval: `by_id` papers now fetch the full HTML page
+  (`arxiv.org/html/{id}`, up to 100k chars) so methodology, results, and
+  limitations reach the LLM — previously only abstract + intro reached it.
+  Web-fetch cap is now per-domain (arxiv.org/html → 100k, generic → 12k) and
+  truncation appends a `[...TRUNCATED...]` marker instead of cutting silently.
+
 ## [0.8.1] — 2026-08-13
 
 ### Fixed
