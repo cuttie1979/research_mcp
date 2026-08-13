@@ -17,7 +17,7 @@ pipeline with an SQLite-backed queue, MCP server, and five source types.
   recovery, resume (`--resume <id>`), audit trail (`research_phase_log`)
 - **Resilient worker**: max 1 concurrent run, batch coherence, unlimited retry
   with backoff, auth errors (401/403) fail fast
-- **MCP server** (`--mcp`): 7 tools over stdio for OpenCode/Claude/etc.
+- **MCP server** (`--mcp`): 8 tools over stdio for OpenCode/Claude/etc.
 - **Language-aware**: Hungarian topics produce Hungarian reports and debates
 - **CLI**: run research, `--list`, `--status <id>`, `--resume <id>`
 
@@ -85,6 +85,9 @@ research_mcp --status <run_id>
 # Resume an interrupted run (crash recovery)
 research_mcp --resume <run_id>
 
+# Re-run a job with the same topic and fresh session (test fixes)
+research_mcp --rerun <run_id>
+
 # Run as MCP server (stdio)
 research_mcp --mcp
 ```
@@ -116,6 +119,7 @@ A ready-made OpenCode skill ships in `.opencode/skills/research-deepresearch/`
 | `research_cancel` | Cancel a run or an entire batch |
 | `research_resume` | Re-queue failed/blocked/cancelled runs |
 | `research_output` | Read generated `.md` + `.provenance.md` |
+| `research_rerun` | Re-run a job: new run, same topic, fresh session |
 
 ## Output
 

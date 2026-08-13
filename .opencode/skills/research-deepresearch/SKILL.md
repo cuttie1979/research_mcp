@@ -20,6 +20,7 @@ phase, and a cited markdown brief with provenance.
 | `research_cancel` | Cancel a run or batch |
 | `research_resume` | Re-queue failed/blocked/cancelled runs |
 | `research_output` | Read generated `.md` + `.provenance.md` |
+| `research_rerun` | New run with the same topic, fresh session (re-test a job) |
 
 ## Workflow
 

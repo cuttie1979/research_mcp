@@ -243,6 +243,26 @@ impl ResearchMcp {
         Ok(SubmitResult { run_id: run.id.clone(), status: run.status, slug: run.slug })
     }
 
+    /// Re-run a job: creates a NEW run with the same topic and fresh session
+    /// state. Unlike resume, this starts from scratch — for testing fixes.
+    #[tool(description = "Re-run a previous research job: creates a new run with the same topic and fresh session state (starts from scratch, unlike resume). Returns the new run_id.")]
+    async fn research_rerun(
+        &self,
+        Parameters(params): Parameters<RunIdParams>,
+    ) -> Result<SubmitResult, ErrorData> {
+        let original = self
+            .db
+            .get_run(&params.run_id)
+            .map_err(err)?
+            .ok_or_else(|| invalid_request(format!("run {} not found", params.run_id)))?;
+        let slug = crate::workflow::make_slug(&original.topic);
+        let run = self
+            .db
+            .create_run(&original.topic, &slug, None, original.priority)
+            .map_err(err)?;
+        Ok(SubmitResult { run_id: run.id.clone(), status: run.status, slug: run.slug })
+    }
+
     /// Submit multiple research topics as one batch. Returns a batch_id plus
     /// the run_ids. The batch can be cancelled/resumed as a unit.
     #[tool(description = "Submit multiple research topics as a batch. Returns batch_id and run_ids. Batch can be cancelled/resumed as a unit.")]

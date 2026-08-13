@@ -69,9 +69,9 @@ Restart OpenCode (or run `/mcp` to check), then ask:
 use the research_mcp tool to research "benefits of intermittent fasting"
 ```
 
-You should see the tool list (7 tools: `research_submit`, `research_batch_submit`,
+You should see the tool list (8 tools: `research_submit`, `research_batch_submit`,
 `research_list`, `research_status`, `research_cancel`, `research_resume`,
-`research_output`).
+`research_output`, `research_rerun`).
 
 ## 5. Using the tools
 
@@ -84,6 +84,7 @@ You should see the tool list (7 tools: `research_submit`, `research_batch_submit
 | Cancel | `research_cancel(run_id \| batch_id)` | Stops queued/running work |
 | Resume | `research_resume(run_id \| batch_id)` | Re-queues failed/cancelled |
 | Read output | `research_output(run_id)` | Returns `.md` + `.provenance.md` |
+| Re-run | `research_rerun(run_id)` | New run, same topic, fresh session (testing fixes) |
 
 Recommended agent flow:
 

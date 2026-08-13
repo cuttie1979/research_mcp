@@ -46,6 +46,11 @@ struct Cli {
     #[arg(long)]
     resume: Option<String>,
 
+    /// Re-run a job by ID (CLI mode) — creates a NEW run with the same topic
+    /// and fresh session state (for testing fixes on previously broken runs)
+    #[arg(long)]
+    rerun: Option<String>,
+
     /// OpenCode Go model ID (overrides config.toml)
     #[arg(long)]
     model: Option<String>,
@@ -163,6 +168,43 @@ async fn main() -> anyhow::Result<()> {
                 r.phase,
                 r.topic
             );
+        }
+        return Ok(());
+    }
+
+    // Re-run a job: create a NEW run with the same topic and fresh session
+    // (different from --resume, which continues the saved session). Used to
+    // test fixes on previously broken runs.
+    if let Some(run_id) = &cli.rerun {
+        let original = db
+            .get_run(run_id)?
+            .ok_or_else(|| anyhow::anyhow!("run {run_id} not found"))?;
+        let slug = workflow::make_slug(&original.topic);
+        let new_run = db.create_run(&original.topic, &slug, None, original.priority)?;
+        println!("Re-running topic from {run_id}");
+        println!("New Run ID: {}", new_run.id);
+        println!("Slug:       {slug}");
+
+        let engine = workflow::Engine { cfg: wf_cfg, db: (*db).clone() };
+        match engine.execute_run(&new_run).await {
+            Ok(true) => {
+                let r = db.get_run(&new_run.id)?.unwrap();
+                println!("\n✔ Re-run complete.");
+                println!("  report:  {}", r.report_path.unwrap_or_default());
+                println!("  provenance: {}", r.provenance_path.unwrap_or_default());
+            }
+            Ok(false) => {
+                let r = db.get_run(&new_run.id)?.unwrap();
+                eprintln!("✖ Re-run ended without completion. Status: {}", r.status);
+                if let Some(e) = r.error {
+                    eprintln!("  error: {e}");
+                }
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("✖ Re-run failed: {e}");
+                std::process::exit(1);
+            }
         }
         return Ok(());
     }

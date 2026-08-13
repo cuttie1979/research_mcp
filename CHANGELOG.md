@@ -12,6 +12,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   "paper not verified" reports (issue from 2026-08-13 batch).
 
 ### Added
+- `research_rerun` MCP tool + CLI `--rerun <run_id>`: creates a NEW run with
+  the same topic and fresh session state — for testing fixes on previously
+  broken jobs (unlike `--resume`, which continues the saved session)
 - SECURITY.md — vulnerability reporting policy
 - docs/opencode.md — full OpenCode setup guide
 - `.opencode/skills/research-deepresearch/` — agent skill for the MCP tools
