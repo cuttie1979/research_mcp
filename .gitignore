@@ -1,4 +1,8 @@
 /target
 /config.toml
 /research.db
+/research.db-shm
+/research.db-wal
 *.db
+*.db-shm
+*.db-wal
