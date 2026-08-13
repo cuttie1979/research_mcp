@@ -18,9 +18,9 @@ phase, and a cited markdown brief with provenance.
 | `research_list` | List runs (status filter, pagination) |
 | `research_status` | Phase, progress %, error, phase log |
 | `research_cancel` | Cancel a run or batch |
-| `research_resume` | Re-queue failed/blocked/cancelled runs |
+| `research_resume` | Re-queue failed/blocked/cancelled runs (continues saved session) |
 | `research_output` | Read generated `.md` + `.provenance.md` |
-| `research_rerun` | New run with the same topic, fresh session (re-test a job) |
+| `research_rerun` | New run, same topic, FRESH session (re-test a job from scratch) |
 
 ## Workflow
 
@@ -60,6 +60,20 @@ Summarize the brief for the user:
   the user, don't retry blindly.
 - If a run was interrupted (crash/timeout), `research_resume` continues from
   the saved session — phases already completed are not redone.
+- If a run produced a wrong result due to a fixed bug (or the user wants a
+  clean re-run of the same topic), use `research_rerun(run_id)` instead of
+  `research_resume`. Rerun creates a NEW run with the same topic and an empty
+  session, so the whole pipeline runs again with the current code. Resume only
+  continues where the previous run stopped.
+
+**Choose resume vs rerun:**
+
+| Situation | Use |
+|---|---|
+| Interrupted / crashed mid-run, phases already done | `research_resume` |
+| Failed due to transient error (API, network), fix applied | `research_resume` |
+| Wrong output from an old bug, want a clean retry | `research_rerun` |
+| User wants the same topic researched again, fresh | `research_rerun` |
 
 ## Output format
 

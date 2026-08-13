@@ -93,7 +93,9 @@ Recommended agent flow:
    phase adds ~5-10 min on large source sets).
 3. On `complete`, call `research_output` and summarize the report for the user.
 4. If a run ends `failed`/`blocked`, check `research_status` for `error`, fix
-   the cause (e.g. API key), then `research_resume`.
+   the cause (e.g. API key), then `research_resume` (continues the saved
+   session) — or `research_rerun` if you want a fully fresh run of the same
+   topic (e.g. after a bug fix).
 
 ## 6. Where output lands
 
