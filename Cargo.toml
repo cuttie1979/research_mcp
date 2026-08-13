@@ -1,6 +1,6 @@
 [package]
 name = "research_mcp"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 description = "Rust deepresearch tool — Feynman deepresearch port with OpenCode Go LLM + DuckDuckGo search"
 license = "MIT"

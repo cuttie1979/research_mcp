@@ -6,8 +6,9 @@
 //! - research_list(status?, limit?, offset?) → runs
 //! - research_status(run_id) → full state incl. phase log
 //! - research_cancel(run_id | batch_id) → cancelled runs
-//! - research_resume(run_id | batch_id) → re-queued runs
+//! - research_resume(run_id | batch_id) → re-queued runs (continues session)
 //! - research_output(run_id) → report + provenance content
+//! - research_rerun(run_id) → new run, same topic, fresh session
 
 use std::sync::Arc;
 

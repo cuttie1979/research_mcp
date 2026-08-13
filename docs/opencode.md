@@ -97,6 +97,15 @@ Recommended agent flow:
    session) — or `research_rerun` if you want a fully fresh run of the same
    topic (e.g. after a bug fix).
 
+**Resume vs rerun:**
+
+| Situation | Use |
+|---|---|
+| Interrupted / crashed mid-run, phases already done | `research_resume` |
+| Failed due to transient error (API, network), fix applied | `research_resume` |
+| Wrong output from an old bug, want a clean retry | `research_rerun` |
+| User wants the same topic researched again, fresh | `research_rerun` |
+
 ## 6. Where output lands
 
 Reports are written to `out_dir` (default
