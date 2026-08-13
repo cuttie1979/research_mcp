@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- arXiv ID extraction: regex now case-insensitive, accepts `arXiv:` (capital A),
+  `arXiv :` (space before colon), bare `arxiv`, and URL forms. Previously
+  `arXiv:NNNN.NNNNN` topics skipped the by-id fetch and produced incorrect
+  "paper not verified" reports (issue from 2026-08-13 batch).
+
 ### Added
 - SECURITY.md — vulnerability reporting policy
 - docs/opencode.md — full OpenCode setup guide

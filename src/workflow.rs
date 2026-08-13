@@ -562,7 +562,9 @@ pub fn make_slug(topic: &str) -> String {
 
 /// Extract arXiv IDs from a topic string.
 fn extract_arxiv_ids(text: &str) -> Vec<String> {
-    let re = Regex::new(r"(?:arxiv\.org/(?:abs|pdf)/|arxiv:\s*|^|\s)(\d{4}\.\d{4,5}(?:v\d+)?)").unwrap();
+    // Case-insensitive; accepts arXiv:NNNN.NNNNN, arXiv : NNNN.NNNNN, bare
+    // arxiv NNNN.NNNNN, arxiv.org/abs/... URLs, and bare IDs at start/after space.
+    let re = Regex::new(r"(?i)(?:arxiv\.org/(?:abs|pdf)/|arxiv\s*:?\s*|^|\s)(\d{4}\.\d{4,5}(?:v\d+)?)").unwrap();
     let mut out = Vec::new();
     for cap in re.captures_iter(text) {
         if let Some(m) = cap.get(1) {
@@ -966,5 +968,43 @@ mod interview_summary_tests {
         assert!(out.contains("Agent interviews"));
         assert!(out.contains("Open point X"));
         assert!(out.contains("I need more evidence on Y."));
+    }
+}
+
+#[cfg(test)]
+mod extract_id_tests {
+    use super::*;
+
+    #[test]
+    fn extract_arxiv_ids_matches_prefixed_and_url_forms() {
+        // The regression case: arXiv: with capital A and colon separator.
+        let t1 = "Deep research on arXiv:2607.29378 — analyze the paper's full content";
+        // URL form.
+        let t2 = "Paper at https://arxiv.org/abs/2608.03893 here";
+        // Bare ID with version suffix.
+        let t3 = "see 2106.09685v2 for details";
+        // Lowercase arxiv with space, and arXiv with space before colon.
+        let t4 = "arxiv 2607.29378 and arXiv : 2608.03893";
+        // No ID → empty.
+        let t5 = "no identifiers here at all";
+
+        assert_eq!(extract_arxiv_ids(t1), vec!["2607.29378"]);
+        assert_eq!(extract_arxiv_ids(t2), vec!["2608.03893"]);
+        // Version suffix is kept by extraction; arXiv::by_id normalizes it.
+        assert_eq!(extract_arxiv_ids(t3), vec!["2106.09685v2"]);
+        assert_eq!(extract_arxiv_ids(t4), vec!["2607.29378", "2608.03893"]);
+        assert!(extract_arxiv_ids(t5).is_empty());
+    }
+
+    #[test]
+    fn extract_pubmed_ids_matches_forms() {
+        let t1 = "PMID:11504948 is the paper";
+        let t2 = "see https://pubmed.ncbi.nlm.nih.gov/30262254/";
+        let t3 = "PMID 22212839 also";
+        let t4 = "no ids";
+        assert_eq!(extract_pubmed_ids(t1), vec!["11504948"]);
+        assert_eq!(extract_pubmed_ids(t2), vec!["30262254"]);
+        assert_eq!(extract_pubmed_ids(t3), vec!["22212839"]);
+        assert!(extract_pubmed_ids(t4).is_empty());
     }
 }
