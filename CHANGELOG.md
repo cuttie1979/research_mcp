@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-08-13
+
 ### Fixed
 - arXiv full-text retrieval: `by_id` papers now fetch the full HTML page
   (`arxiv.org/html/{id}`, up to 100k chars) so methodology, results, and
