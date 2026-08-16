@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+- arXiv full-text cap raised 100k → 250k chars so very large LaTeX-rendered
+  papers (e.g. 2603.10145, 83k cleaned chars) are fully captured. The web
+  fetch path already retrieves `arxiv.org/html/{id}` full text for by_id
+  papers (since 0.8.2); this removes the ceiling for the largest papers.
+
 ## [0.8.2] — 2026-08-13
 
 ### Fixed

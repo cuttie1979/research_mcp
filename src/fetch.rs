@@ -62,7 +62,7 @@ impl Fetcher {
     /// stay small. Returns the cap for a URL.
     pub fn cap_for_url(&self, url: &str) -> usize {
         if url.contains("arxiv.org/html/") || url.contains("arxiv.org/pdf/") {
-            100_000
+            250_000
         } else {
             12_000
         }
@@ -127,7 +127,7 @@ mod fulltext_tests {
         let f = Fetcher::new();
         let url = "https://arxiv.org/html/2607.29378";
         let cap = f.cap_for_url(url);
-        assert_eq!(cap, 100_000, "arxiv HTML should get the large cap");
+        assert_eq!(cap, 250_000, "arxiv HTML should get the large cap");
         let text = f.fetch(url, cap).await.expect("fetch should work");
         assert!(text.chars().count() > 12_000, "full text should exceed the old 12k cap, got {}", text.chars().count());
         // The intro gets cut at 12k; methodology/results should appear beyond it.
