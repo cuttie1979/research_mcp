@@ -693,7 +693,17 @@ fn build_evidence_block(evidence: &[EvidenceItem]) -> String {
     for e in evidence {
         s.push_str(&format!("[{0}] {1}\n", e.id, e.title));
         s.push_str(&format!("    URL: {}\n", e.url));
-        let excerpt: String = e.text.chars().take(3000).collect();
+        // Excerpt size depends on source type: arXiv full-text evidence (large,
+        // marked "--- FULL TEXT ---") carries methodology/results the drafting
+        // LLM needs whole; generic web/abstract sources stay capped at 3000.
+        let excerpt_len = if e.text.contains("--- FULL TEXT") && e.text.chars().count() > 20_000 {
+            // Enough to cover a long paper's methods+results beyond the intro
+            // (which easily exceeds 12k), without an unbounded prompt.
+            e.text.chars().count().min(60_000)
+        } else {
+            3000
+        };
+        let excerpt: String = e.text.chars().take(excerpt_len).collect();
         s.push_str(&format!("    CONTENT: {excerpt}\n\n"));
     }
     s
@@ -1025,5 +1035,43 @@ mod extract_id_tests {
         assert_eq!(extract_pubmed_ids(t2), vec!["30262254"]);
         assert_eq!(extract_pubmed_ids(t3), vec!["22212839"]);
         assert!(extract_pubmed_ids(t4).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod evidence_block_tests {
+    use super::*;
+
+    #[test]
+    fn arxiv_fulltext_gets_large_excerpt() {
+        // arXiv full-text evidence: >20k chars with FULL TEXT marker.
+        let big: String = "--- FULL TEXT (arxiv.org/html) ---\n".to_string()
+            + &"METHODOLOGY " .repeat(5000); // ~50k chars
+        let small: String = "brief abstract".to_string();
+
+        let ev = vec![
+            EvidenceItem { id: "S1".into(), title: "arXiv big".into(), url: "https://arxiv.org/html/x".into(), snippet: String::new(), text: big },
+            EvidenceItem { id: "S2".into(), title: "generic".into(), url: "https://web.com".into(), snippet: String::new(), text: small },
+        ];
+        let block = build_evidence_block(&ev);
+        // The big arXiv one should appear with far more than 3000 chars.
+        let big_idx = block.find("METHODOLOGY").unwrap();
+        let methods_len = block[big_idx..].chars().count();
+        assert!(methods_len > 3000, "arXiv full-text excerpt should exceed 3000, got {methods_len}");
+        // The generic one stays capped.
+        assert!(block.contains("brief abstract"));
+        assert!(block.len() >= 5000, "block should contain the large excerpt");
+        assert!(block.chars().count() < 70000, "still bounded");
+    }
+
+    #[test]
+    fn generic_stays_3000() {
+        let long: String = "word ".repeat(4000); // 20k chars
+        let ev = vec![EvidenceItem { id: "S1".into(), title: "web".into(), url: "https://web.com".into(), snippet: String::new(), text: long }];
+        let block = build_evidence_block(&ev);
+        // Content excerpt capped at 3000: find the CONTENT marker start.
+        let content_start = block.find("CONTENT:").unwrap() + "CONTENT:".len();
+        let excerpt_len = block[content_start..].chars().count();
+        assert!(excerpt_len <= 3100, "generic excerpt should stay ~3000, got {excerpt_len}");
     }
 }
