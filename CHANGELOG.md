@@ -5,14 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [Unreleased]
+## [0.8.3] — 2026-08-17
 
 ### Fixed
+- **Drafting excerpt (Bug 2603 root cause):** `build_evidence_block` capped every
+  source at 3000 chars before the drafting LLM, so even when the fetch layer had
+  the full arXiv HTML the brief still cited only abstract + Introduction.
+  arXiv full-text evidence (>20k chars, marked `--- FULL TEXT ---`) now gets up
+  to a 60k excerpt; generic/abstract sources stay at 3000.
 - arXiv full-text cap raised 100k → 250k chars so very large LaTeX-rendered
   papers (e.g. 2603.10145, 83k cleaned chars) are fully captured. The web
   fetch path already retrieves `arxiv.org/html/{id}` full text for by_id
   papers (since 0.8.2); this removes the ceiling for the largest papers.
-
 ## [0.8.2] — 2026-08-13
 
 ### Fixed
