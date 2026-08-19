@@ -7,9 +7,10 @@ pipeline with an SQLite-backed queue, MCP server, and five source types.
 
 - **8-phase pipeline**: planning → searching → fetching → drafting → citing →
   debating → reviewing → delivering
-- **5 source types**: web (DuckDuckGo + Brave fallback), arXiv (HTML abs page,
-  immune to export API rate limits), PubMed (E-utilities), Scopus (Elsevier,
-  metadata + CrossRef abstract fallback)
+- **5 source types**: web (DuckDuckGo → Bing → Brave, three keyless backends
+  with bot-gating detection + retry), arXiv (HTML abs page, immune to export
+  API rate limits), PubMed (E-utilities), Scopus (Elsevier, metadata +
+  CrossRef abstract fallback)
 - **Multi-agent debate**: 5 agents with distinct beliefs critique the brief's
   content AND references, converge over rounds (spread/convergence measured),
   then answer targeted follow-up interviews on open questions
@@ -68,6 +69,30 @@ cp config.example.toml config.toml   # fill in your API keys
 | `db_path` | no | SQLite path (default `./research.db`) |
 | `llm_timeout_secs` | no | LLM request timeout (default 300) |
 | `temperature` | no | Drafting temperature (default 0.3) |
+| `max_sources` | no | Hard cap on full-text downloads per run (default 8) |
+
+### Adaptive coverage (LLM-driven)
+
+The research planner is an LLM that sizes the search based on topic scale
+(Feynman-style "Scale decision"). Two extra plan fields are emitted at planning
+time and are not in `config.toml`:
+
+| Plan field | Meaning | Narrow explainer | Broad survey | News / current-events |
+|---|---|---|---|---|
+| `web_per_query` | max web results to collect per query | ~6 | 10–15 | 15–20 |
+| `download_budget` | desired full-text downloads | ~6 | 10–15 | up to 20 |
+
+`download_budget` is combined with the config `max_sources` via a **double cap**:
+the actual download count is `min(max_sources, download_budget)`, so you keep a
+hard upper bound on cost/context while coverage expands for news-heavy topics.
+Plans that omit either field fall back to defaults (`6` / `8`), keeping old
+plans and saved sessions compatible.
+
+Web search resilience: the keyless backend chain is DuckDuckGo → Bing → Brave,
+each with bot-gating detection (real challenge markers, checked after parsing
+so genuine results are never discarded) and the whole sweep retries before
+giving up. When all three are empty/gated, a "0 web results" warning is
+surfaced in the run log instead of silently producing an empty brief.
 
 ## Usage
 
@@ -87,6 +112,9 @@ research_mcp --resume <run_id>
 
 # Re-run a job with the same topic and fresh session (test fixes)
 research_mcp --rerun <run_id>
+
+# Raise the hard cap on full-text downloads (news/current-events topics)
+research_mcp --max-sources 20 "your topic"
 
 # Run as MCP server (stdio)
 research_mcp --mcp
