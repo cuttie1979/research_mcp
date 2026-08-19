@@ -44,6 +44,15 @@ pub struct Plan {
     pub evidence_needed: Vec<String>,
     pub scale: String,
     pub queries: Vec<String>,
+    /// Adaptive: max web results to fetch per search query. The LLM sets this
+    /// from the topic/scale — broad multi-faceted or current-events topics
+    /// warrant more coverage; narrow "what is X" explainers fewer.
+    #[serde(default = "default_web_per_query")]
+    pub web_per_query: usize,
+}
+
+fn default_web_per_query() -> usize {
+    6
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -372,7 +381,10 @@ async fn gather(
 
     for (i, q) in queries.iter().enumerate() {
         log_info!("\n── Search {}/{}: {q}", i + 1, queries.len());
-        match search.query(q, 6).await {
+        // Adaptive per-query result count: the planner sets web_per_query from
+        // the topic/scale (narrow explainer → ~6, current-events/news → 15-20).
+        let per_query = if plan.web_per_query > 0 { plan.web_per_query } else { 6 };
+        match search.query(q, per_query).await {
             Ok(results) => {
                 for r in results {
                     if seen_urls.insert(r.url.clone()) {
@@ -627,11 +639,17 @@ async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan>
            \"key_questions\": [\"...\"],\n\
            \"evidence_needed\": [\"...\"],\n\
            \"scale\": \"direct\" | \"survey\",\n\
-           \"queries\": [\"...\"]\n\
+           \"queries\": [\"...\"],\n\
+           \"web_per_query\": <int>\n\
          }\n\
          Rules:\n\
          - 3 to 6 search queries, distinct angles: definition/history, mechanism/how-it-works, current usage/comparison.\n\
-         - scale: \"direct\" for narrow explainers (3-10 tool calls), \"survey\" for broad multi-faceted topics.\n\
+         - scale: \"direct\" for narrow explainers (3-10 tool calls), \"survey\" for broad multi-faceted or current-events/news topics.\n\
+         - web_per_query: how many web results to collect per query, based on topic urgency/scope.\n\
+           Use 6-8 for narrow topics or quick fact checks.\n\
+           Use 10-15 for broad surveys.\n\
+           Use 15-20 for fast-moving/current-events or news-heavy topics where coverage matters and\n\
+           individual sources are thin (the web query may otherwise return sparse results).\n\
          - key_questions: 2-5.\n\
          - No markdown, no code fences, no prose. Only the JSON object.",
     );
@@ -1078,5 +1096,38 @@ mod evidence_block_tests {
         let content_start = block.find("CONTENT:").unwrap() + "CONTENT:".len();
         let excerpt_len = block[content_start..].chars().count();
         assert!(excerpt_len <= 3100, "generic excerpt should stay ~3000, got {excerpt_len}");
+    }
+}
+
+#[cfg(test)]
+mod plan_parse_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_plan_without_web_per_query_defaults_to_6() {
+        // Old-format plan (no web_per_query) must still parse and default to 6.
+        let raw = r#"{
+            "key_questions": ["q1"],
+            "evidence_needed": ["e1"],
+            "scale": "direct",
+            "queries": ["query one", "query two"]
+        }"#;
+        let plan = parse_plan_json(raw).unwrap();
+        assert_eq!(plan.web_per_query, 6, "missing web_per_query should default to 6");
+    }
+
+    #[test]
+    fn adaptive_plan_uses_llm_web_per_query() {
+        // Broad/current-events topic -> planner sets a high result count.
+        let raw = r#"{
+            "key_questions": ["how did energy prices move this week"],
+            "evidence_needed": ["prices", "policy", "supply"],
+            "scale": "survey",
+            "queries": ["energy market week", "oil prices change"],
+            "web_per_query": 18
+        }"#;
+        let plan = parse_plan_json(raw).unwrap();
+        assert_eq!(plan.web_per_query, 18);
+        assert_eq!(plan.scale, "survey");
     }
 }

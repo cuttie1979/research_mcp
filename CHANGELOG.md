@@ -23,6 +23,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Verified live: `search_live_energy_news` (energy-market news) returns 6+
     results; `bing_live` returns 8 with decoded URLs.
 
+### Added
+- **Adaptive web coverage (LLM-driven)**: the research planner now emits a
+  `web_per_query` value based on topic scale/urgency (Feynman-style Scale
+  decision). Narrow explainers → ~6 results/query; broad surveys → 10-15;
+  fast-moving/current-events or news-heavy topics → 15-20. The gather phase
+  uses this per-query result count instead of a hardcoded 6, so news queries
+  pull in more sources when the topic warrants it. Backward compatible: plans
+  without `web_per_query` default to 6.
+
 ## [0.8.3] — 2026-08-17
 
 ### Fixed
