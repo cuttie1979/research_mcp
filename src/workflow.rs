@@ -49,10 +49,19 @@ pub struct Plan {
     /// warrant more coverage; narrow "what is X" explainers fewer.
     #[serde(default = "default_web_per_query")]
     pub web_per_query: usize,
+    /// Adaptive: how many sources to download in full for this run. Combined
+    /// with the config max_sources via min() so the user keeps a hard cost cap
+    /// while the planner adapts coverage to topic weight.
+    #[serde(default = "default_download_budget")]
+    pub download_budget: usize,
 }
 
 fn default_web_per_query() -> usize {
     6
+}
+
+fn default_download_budget() -> usize {
+    8
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +138,15 @@ impl Engine {
         for q in &plan.queries {
             log_info!("  - {q}");
         }
+        // Effective download cap = user's config limit min the planner's
+        // adaptive budget, so coverage scales with topic weight while the
+        // user keeps a hard upper bound on cost/context.
+        let effective_max_sources = if plan.download_budget == 0 {
+            max_sources
+        } else {
+            max_sources.min(plan.download_budget)
+        };
+        log_info!("max_sources(config)={max_sources}, download_budget(plan)={}, effective={effective_max_sources}", plan.download_budget);
         let plan_path = drafts_dir.join(format!("{slug}-plan.md"));
         std::fs::write(&plan_path, format_plan(&plan, &topic, &slug)).context("write plan")?;
 
@@ -158,7 +176,7 @@ impl Engine {
                         log_info!("\n── fetching ──");
                         self.begin_phase(run, "fetching")?;
                         let (ev, rej) =
-                            fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
+                            fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), effective_max_sources).await?;
                         let sess = SessionData {
                             sources_json: Some(serde_json::to_string(&ev)?),
                             ..Default::default()
@@ -195,7 +213,7 @@ impl Engine {
                     log_info!("\n── fetching ──");
                     self.begin_phase(run, "fetching")?;
                     let (ev, rej) =
-                        fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), max_sources).await?;
+                        fetch_sources(&fetcher, &gathered.web, gathered.arxiv, gathered.pubmed, gathered.scopus, scopus.as_ref(), effective_max_sources).await?;
                     let sess = SessionData {
                         sources_json: Some(serde_json::to_string(&ev)?),
                         ..Default::default()
@@ -640,7 +658,8 @@ async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan>
            \"evidence_needed\": [\"...\"],\n\
            \"scale\": \"direct\" | \"survey\",\n\
            \"queries\": [\"...\"],\n\
-           \"web_per_query\": <int>\n\
+           \"web_per_query\": <int>,\n\
+           \"download_budget\": <int>\n\
          }\n\
          Rules:\n\
          - 3 to 6 search queries, distinct angles: definition/history, mechanism/how-it-works, current usage/comparison.\n\
@@ -650,6 +669,10 @@ async fn plan_research(llm: &Llm, topic: &str, temperature: f32) -> Result<Plan>
            Use 10-15 for broad surveys.\n\
            Use 15-20 for fast-moving/current-events or news-heavy topics where coverage matters and\n\
            individual sources are thin (the web query may otherwise return sparse results).\n\
+         - download_budget: how many sources to download in full for this run (subject to a user-set hard cap).\n\
+           Use ~6 for narrow fact checks.\n\
+           Use 10-15 for broad surveys.\n\
+           Use up to 20 for news/current-events where breadth of sources is valued over depth of any one.\n\
          - key_questions: 2-5.\n\
          - No markdown, no code fences, no prose. Only the JSON object.",
     );
@@ -1104,8 +1127,8 @@ mod plan_parse_tests {
     use super::*;
 
     #[test]
-    fn legacy_plan_without_web_per_query_defaults_to_6() {
-        // Old-format plan (no web_per_query) must still parse and default to 6.
+    fn legacy_plan_without_adaptive_fields_defaults() {
+        // Old-format plan (no web_per_query / download_budget) must still parse.
         let raw = r#"{
             "key_questions": ["q1"],
             "evidence_needed": ["e1"],
@@ -1114,20 +1137,36 @@ mod plan_parse_tests {
         }"#;
         let plan = parse_plan_json(raw).unwrap();
         assert_eq!(plan.web_per_query, 6, "missing web_per_query should default to 6");
+        assert_eq!(plan.download_budget, 8, "missing download_budget should default to 8");
     }
 
     #[test]
-    fn adaptive_plan_uses_llm_web_per_query() {
-        // Broad/current-events topic -> planner sets a high result count.
+    fn adaptive_plan_uses_llm_adaptive_fields() {
+        // Broad/current-events topic -> planner sets high coverage values.
         let raw = r#"{
             "key_questions": ["how did energy prices move this week"],
             "evidence_needed": ["prices", "policy", "supply"],
             "scale": "survey",
             "queries": ["energy market week", "oil prices change"],
-            "web_per_query": 18
+            "web_per_query": 18,
+            "download_budget": 20
         }"#;
         let plan = parse_plan_json(raw).unwrap();
         assert_eq!(plan.web_per_query, 18);
+        assert_eq!(plan.download_budget, 20);
         assert_eq!(plan.scale, "survey");
+    }
+
+    #[test]
+    fn effective_download_cap_is_min_of_config_and_plan() {
+        // User hard cap of 8 must win over a planner budget of 20.
+        let config_cap = 8usize;
+        let plan_budget = 20usize;
+        let effective = if plan_budget == 0 { config_cap } else { config_cap.min(plan_budget) };
+        assert_eq!(effective, 8);
+        // But a smaller planner budget (narrow topic) also caps downward.
+        let narrow_budget = 5usize;
+        let effective2 = config_cap.min(narrow_budget);
+        assert_eq!(effective2, 5);
     }
 }

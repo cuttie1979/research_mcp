@@ -31,6 +31,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   uses this per-query result count instead of a hardcoded 6, so news queries
   pull in more sources when the topic warrants it. Backward compatible: plans
   without `web_per_query` default to 6.
+- **Adaptive download budget (LLM-driven, double cap)**: the planner also emits
+  `download_budget`; the actual full-text download count is
+  `min(config.max_sources, download_budget)` — the user keeps a hard cost cap
+  while coverage scales up for news/current-events. Narrow → ~6, surveys →
+  10-15, news → up to 20. Backward compatible: missing value defaults to 8.
 
 ## [0.8.3] — 2026-08-17
 
