@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-08-19
+
 ### Fixed
 - **Web search resilience (zero web results for news/current-events):** the
   keyless search previously had only DuckDuckGo + Brave; DuckDuckGo is now
@@ -36,6 +38,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `min(config.max_sources, download_budget)` — the user keeps a hard cost cap
   while coverage scales up for news/current-events. Narrow → ~6, surveys →
   10-15, news → up to 20. Backward compatible: missing value defaults to 8.
+- **Community/contribution scaffolding**: `CODE_OF_CONDUCT.md`,
+  `PULL_REQUEST_TEMPLATE.md`, and `.github/ISSUE_TEMPLATE/`
+  (`bug_report.md`, `feature_request.md`).
 
 ## [0.8.3] — 2026-08-17
 
