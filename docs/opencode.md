@@ -128,6 +128,28 @@ Reports are written to `out_dir` (default
 | Tools not listed | Binary path wrong | Check `command` path, restart OpenCode |
 | Slow runs | Debate phase (14 LLM calls) | Normal; use MCP (no CLI timeout) |
 | Interrupted run | CLI timeout / crash | `research_resume(run_id)` — resumes from saved session |
+| "0 web results" in the log | All keyless backends (DDG/Bing/Brave) empty/gated | Transient — `research_rerun` the topic; it retries after backoff. For news/current-events topics consider `--max-sources 20` (hard cap) so the adaptive download budget can expand coverage |
+
+## Web search & adaptive coverage
+
+Web search is resilient during planning/fetching: the keyless backend chain is
+**DuckDuckGo → Bing → Brave**, each with bot-gating detection, and the whole
+sweep retries before giving up — so a transient anti-bot challenge on one
+engine no longer yields an empty brief.
+
+At planning time the LLM sizes the search from the topic (a Feynman-style
+"Scale decision"). It emits two adaptive fields:
+
+| Plan field | Narrow explainer | Broad survey | News / current-events |
+|---|---|---|---|
+| `web_per_query` | ~6 | 10–15 | 15–20 |
+| `download_budget` | ~6 | 10–15 | up to 20 |
+
+The actual full-text download count is `min(config.max_sources,
+download_budget)` — you keep a hard cost cap while coverage expands for
+news-heavy topics. There is nothing to configure in `config.toml` for this;
+raise the hard cap only if you want more sources per run. See the README
+"Adaptive coverage" section for details.
 
 ## Skill
 
