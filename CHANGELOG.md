@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Web search resilience (zero web results for news/current-events):** the
+  keyless search previously had only DuckDuckGo + Brave; DuckDuckGo is now
+  frequently anti-bot-gated (`anomaly`/`challenge-form`) and Brave is a
+  fragile SvelteKit SPA with no bot detection, so a transient challenge on
+  both produced a silent `Ok(vec![])` and an empty/thin brief. Now:
+  - Added a **third keyless backend: Bing HTML** (highest reliability, real
+    URLs decoded from the `ck/a` redirect's base64url `u=` param).
+  - **Explicit bot-gating detection** for Bing/Brave (real challenge markers
+    only, checked *after* parsing so real results are never thrown away).
+  - **Retry/backoff**: the whole DDG→Bing→Brave sweep is retried after
+    transient gating before giving up.
+  - **Warning surfaced**: "0 web results — all backends gated/empty" is logged
+    and the run's searching phase no longer silently proceeds as if the web
+    worked.
+  Verified live: `search_live_energy_news` (energy-market news) returns 6+
+    results; `bing_live` returns 8 with decoded URLs.
+
 ## [0.8.3] — 2026-08-17
 
 ### Fixed

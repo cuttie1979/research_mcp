@@ -1,7 +1,13 @@
 //! Web search — multi-backend with fallback.
-//! Primary: DuckDuckGo HTML (no key). Fallback: Brave HTML (no key).
+//! Tiers (all keyless HTML scrapers):
+//!   1. DuckDuckGo HTML (primary)
+//!   2. Bing HTML (secondary)
+//!   3. Brave HTML (tertiary fallback)
+//! Each tier detects bot-gating and yields to the next; a retry/backoff
+//! pass covers transient gating before the query gives up.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use anyhow::Result;
 use regex::Regex;
@@ -27,15 +33,50 @@ impl Search {
         }
     }
 
-    /// Run a query. Tries DuckDuckGo first; falls back to Brave if DDG
-    /// returns no results or a challenge/anomaly page.
+    /// Run a query over all backends with fallback + retry.
+    /// Order: DDG → Bing → Brave. A backend counts as "usable" iff it parses
+    /// to at least one result; empty/gated results fall through to the next.
+    /// If all tiers return nothing (e.g. transient bot-gating), retry the whole
+    /// chain with short backoff before giving up — so an intermittent challenge
+    /// doesn't silently produce zero web results.
     pub async fn query(&self, query: &str, max: usize) -> Result<Vec<SearchResult>> {
-        let ddg = self.ddg(query, max).await?;
-        if !ddg.is_empty() {
-            return Ok(ddg);
+        for attempt in 0..3 {
+            let results = self.try_all_backends(query, max).await;
+            if !results.is_empty() {
+                if attempt > 0 {
+                    log_info!("  ✓ web search recovered after {attempt} retr(ies)");
+                }
+                return Ok(results);
+            }
+            if attempt < 2 {
+                log_warn!("  ⚠ all web backends empty/gated for {query:?}; retry {} in 2s...", attempt + 1);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
         }
-        log_warn!("  ⚠ DDG returned nothing for {query:?}, trying Brave...");
-        self.brave(query, max).await
+        log_warn!("  ⚠ web search returned 0 results for {query:?} after 3 backend sweeps (DDG/Bing/Brave gated or empty)");
+        Ok(Vec::new())
+    }
+
+    /// Try each backend in order, returning the first non-empty result set.
+    async fn try_all_backends(&self, query: &str, max: usize) -> Vec<SearchResult> {
+        // 1. DuckDuckGo
+        match self.ddg(query, max).await {
+            Ok(r) if !r.is_empty() => return r,
+            Ok(_) => log_warn!("  ⚠ DDG empty/gated for {query:?}"),
+            Err(e) => log_warn!("  ⚠ DDG error: {e}"),
+        }
+        // 2. Bing
+        match self.bing(query, max).await {
+            Ok(r) if !r.is_empty() => return r,
+            Ok(_) => log_warn!("  ⚠ Bing empty/gated for {query:?}"),
+            Err(e) => log_warn!("  ⚠ Bing error: {e}"),
+        }
+        // 3. Brave (last resort)
+        match self.brave(query, max).await {
+            Ok(r) => return r,
+            Err(e) => log_warn!("  ⚠ Brave error: {e}"),
+        }
+        Vec::new()
     }
 
     /// DuckDuckGo HTML endpoint.
@@ -51,11 +92,44 @@ impl Search {
             .await?;
 
         // If the page is an anomaly/challenge, return empty to trigger fallback.
-        if html.contains("anomaly") || html.contains("challenge-form") {
+        if is_bot_gated(&html, &["anomaly", "challenge-form"]) {
             return Ok(Vec::new());
         }
 
         let results = parse_ddg(&html, max)?;
+        Ok(results)
+    }
+
+    /// Bing HTML endpoint (keyless). Returns a fresh cookie jar each call so
+    /// gating cookies from another engine don't poison the request.
+    async fn bing(&self, query: &str, max: usize) -> Result<Vec<SearchResult>> {
+        let client = reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .expect("build bing client");
+
+        let html = client
+            .get("https://www.bing.com/search")
+            .query(&[("q", query), ("count", "10")])
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let results = parse_bing(&html, max)?;
+
+        // Only treat as gated if there are NO results AND a real challenge is
+        // present. Bing's normal page contains "challenges.cloudflare.com" /
+        // "PoWChallengeSolver" in its JS config, so an over-broad "challenge"
+        // marker would false-positive and throw away real results.
+        if results.is_empty()
+            && is_bot_gated(&html, &["captcha", "unusual traffic", "verify you're not a robot"])
+        {
+            return Ok(Vec::new());
+        }
+
         Ok(results)
     }
 
@@ -85,8 +159,23 @@ impl Search {
             .await?;
 
         let results = parse_brave(&html, max)?;
+
+        // Only treat as gated if no results AND a real challenge marker present.
+        if results.is_empty()
+            && is_bot_gated(&html, &["captcha", "verify you're not a robot", "unusual traffic"])
+        {
+            return Ok(Vec::new());
+        }
+
         Ok(results)
     }
+}
+
+/// True if the page is a bot/anomaly challenge rather than a normal SERP.
+/// Case-insensitive substring match on any of the given markers.
+fn is_bot_gated(html: &str, markers: &[&str]) -> bool {
+    let lower = html.to_ascii_lowercase();
+    markers.iter().any(|m| lower.contains(&m.to_ascii_lowercase()))
 }
 
 /// Parse DuckDuckGo HTML result blocks.
@@ -190,6 +279,74 @@ fn parse_brave(html: &str, max: usize) -> Result<Vec<SearchResult>> {
     Ok(out)
 }
 
+/// Parse Bing HTML result blocks.
+/// Structure:
+/// <li class="b_algo">
+///   <h2 class=""><a target="_blank" href="https://www.bing.com/ck/a?...&u=BASE64URL...">
+///     TITLE
+///   </a></h2>
+///   <p class="...b_lineclamp...">SNIPPET</p>
+/// The result URL is a `bing.com/ck/a` redirect with the real URL in its
+/// base64url `u=` parameter; decode that, else fall back to the raw href.
+fn parse_bing(html: &str, max: usize) -> Result<Vec<SearchResult>> {
+    let block_re = Regex::new(r#"<li class="b_algo""#)?;
+    let blocks: Vec<&str> = block_re.split(html).skip(1).collect();
+
+    let link_re = Regex::new(r#"<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#)?;
+    let snippet_re = Regex::new(r#"<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>(.*?)</p>"#)?;
+    let u_re = Regex::new(r#"[?&]u=([^&]+)"#)?;
+
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for block in blocks.into_iter().take(max * 2) {
+        if out.len() >= max {
+            break;
+        }
+        let Some(cap) = link_re.captures(block) else { continue };
+        let raw_href = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let title = strip_html(cap.get(2).map(|m| m.as_str()).unwrap_or_default());
+
+        // Decode the real URL from the ck/a redirect's base64url `u=` param.
+        let mut url = raw_href.trim().to_string();
+        if let Some(u) = u_re.captures(&raw_href.replace("&amp;", "&"))
+            .and_then(|c| c.get(1)) {
+            let b64 = u.as_str().to_string();
+            if let Some(decoded) = base64url_decode(&b64) {
+                url = decoded;
+            }
+        }
+
+        if url.is_empty() || url.starts_with("bing.com") {
+            continue;
+        }
+        if !seen.insert(url.clone()) {
+            continue;
+        }
+
+        let snippet = snippet_re
+            .captures(block)
+            .and_then(|c| c.get(1))
+            .map(|m| strip_html(m.as_str()))
+            .unwrap_or_default();
+
+        out.push(SearchResult { title, url, snippet });
+    }
+
+    Ok(out)
+}
+
+/// Decode a Bing base64url value (URL-safe alphabet, padding optional).
+/// Bing prefixes its `u=` param with "a1" (a NodeJS Buffer/encoding marker);
+/// strip it before decoding, since it is not part of the base64 payload.
+fn base64url_decode(s: &str) -> Option<String> {
+    use base64::Engine;
+    let payload = s.strip_prefix("a1").unwrap_or(s);
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let bytes = engine.decode(payload.as_bytes()).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
 fn urlencoding_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -276,5 +433,77 @@ mod tests {
         assert_eq!(results[0].title, "Example Page");
         assert_eq!(results[0].url, "https://example.com/page");
         assert!(results[0].snippet.contains("snippet text"));
+    }
+
+    #[tokio::test]
+    #[ignore = "live — run manually: cargo test -- --ignored search_live_energy_news"]
+    async fn search_live_energy_news() {
+        // Reproduces the reported bug: "latest news energy market past week"
+        // returned zero web results. Exercises the real DDG->Brave fallback chain.
+        let s = Search::new();
+        let q = "latest news on the energy market over the past one week";
+        let res = s.query(q, 6).await.expect("query should not error");
+        log_info!("  query: {q}");
+        log_info!("  results: {}", res.len());
+        for r in res.iter().take(8) {
+            log_info!("    - {} | {}", r.title, r.url);
+        }
+        assert!(!res.is_empty(), "web search returned no results — bug reproduces");
+    }
+
+    #[test]
+    fn parse_bing_sample() {
+        // Bing uses `b_algo` blocks with a `ck/a` redirect carrying the real
+        // URL base64url in its `u=` param.
+        let html = r#"<ol id="b_results"><li class="b_algo">
+            <h2 class=""><a target="_blank" href="https://www.bing.com/ck/a?!&amp;&amp;p=abc&amp;u=aHR0cHM6Ly9leGFtcGxlLmNvbS9wYWdl&amp;ntb=1">Example Page</a></h2>
+            <p class="b_lineclamp">Here is the <strong>snippet</strong> text.</p>
+        </li></ol>"#;
+        let results = parse_bing(html, 5).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Example Page");
+        assert_eq!(results[0].url, "https://example.com/page");
+        assert!(results[0].snippet.contains("snippet text"));
+    }
+
+    #[test]
+    fn base64url_decode_handles_missing_padding_and_a1_prefix() {
+        // No padding: aHR0cHM6Ly9leGFtcGxlLmNvbS9wYWdl == "https://example.com/page"
+        assert_eq!(
+            base64url_decode("aHR0cHM6Ly9leGFtcGxlLmNvbS9wYWdl").as_deref(),
+            Some("https://example.com/page")
+        );
+        // Real Bing value carries a leading "a1" marker that must be stripped:
+        // a1aHR0cHM6Ly9uaWxlcG9zdC5jby51Zy8 == "https://nilepost.co.ug/"
+        assert_eq!(
+            base64url_decode("a1aHR0cHM6Ly9uaWxlcG9zdC5jby51Zy8").as_deref(),
+            Some("https://nilepost.co.ug/")
+        );
+    }
+
+    #[test]
+    fn bot_gating_detection() {
+        assert!(is_bot_gated("<html>anomaly detected</html>", &["anomaly", "challenge-form"]));
+        assert!(is_bot_gated("<html>Complete CAPTCHA to continue</html>", &["captcha", "challenge"]));
+        assert!(!is_bot_gated("<html>normal results here</html>", &["captcha", "anomaly"]));
+    }
+}
+
+#[cfg(test)]
+mod bing_live_tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "live — run manually: cargo test -- --ignored bing_live"]
+    async fn bing_live() {
+        // Verifies the Bing tier independently returns results (so that if DDG
+        // is gated, the new fallback tier rescues the query).
+        let s = Search::new();
+        let res = s.bing("latest news energy market", 8).await.expect("bing should not error");
+        log_info!("  bing results: {}", res.len());
+        for r in res.iter().take(5) {
+            log_info!("    - {} | {}", r.title, r.url);
+        }
+        assert!(!res.is_empty(), "bing backend returned nothing");
     }
 }

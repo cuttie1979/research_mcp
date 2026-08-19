@@ -171,6 +171,11 @@ impl Engine {
                         gathered.pubmed.len(),
                         gathered.scopus.len()
                     );
+                    if gathered.web.is_empty() {
+                        log_warn!(
+                            "  ⚠ 0 web results for this topic — all keyless backends (DDG/Bing/Brave) returned empty or were gated. Retry the run if the topic is current-events/news."
+                        );
+                    }
                     let s = SessionData {
                         sources_json: Some(serde_json::to_string(&gathered)?),
                         ..Default::default()
